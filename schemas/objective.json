@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-os.dev/schema/objective/1.0",
+  "title": "Objective",
+  "description": "Canonical schema for AI-OS Objective entities",
+  "type": "object",
+  "required": ["id", "title", "state", "priority", "created_at", "updated_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique objective identifier (UUID v4)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Human-readable objective name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description of what this objective accomplishes"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "DISCOVERED", "PLANNED", "READY", "EXECUTING", "REVIEW",
+        "INTEGRATION", "DONE", "PLANNING_FAILURE", "PERMISSION_FAILURE",
+        "EXECUTION_FAILURE", "REVIEW_FAILURE", "INTEGRATION_FAILURE",
+        "HUMAN_REJECTED", "ROLLBACK", "ABANDONED"
+      ],
+      "description": "Current state in the deterministic state machine"
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "MINIMAL"]
+    },
+    "parent_id": {
+      "type": ["string", "null"],
+      "description": "Optional parent objective for hierarchical decomposition"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "User-defined categorization tags"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary key-value metadata"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Number of retry attempts for this objective"
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "$id": "manifest.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExecutionManifest",
+  "description": "Execution Manifest for the AI-OS kernel. Describes a plan's execution steps, environment, and dependencies.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "manifest_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this manifest."
+    },
+    "objective_id": {
+      "type": "string",
+      "description": "The objective this manifest executes."
+    },
+    "stage": {
+      "type": "string",
+      "description": "Current execution stage.",
+      "enum": ["Discovery", "Analysis", "Planning", "Execution", "Review", "Merge", "Completed", "Failed"]
+    },
+    "steps": {
+      "type": "array",
+      "description": "Ordered list of execution steps.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique step identifier."
+          },
+          "type": {
+            "type": "string",
+            "description": "The kind of execution step.",
+            "enum": ["command", "worker_call", "gate"]
+          },
+          "config": {
+            "type": "object",
+            "description": "Step-specific configuration."
+          }
+        },
+        "required": ["id", "type", "config"]
+      }
+    },
+    "environment": {
+      "type": "object",
+      "description": "Environment variables and runtime configuration for execution."
+    },
+    "dependencies": {
+      "type": "array",
+      "description": "List of dependency references (package names, URIs, etc.).",
+      "items": {
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the manifest was created."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the manifest was last updated."
+    }
+  },
+  "required": ["manifest_id", "objective_id", "stage", "steps", "environment", "dependencies", "created_at", "updated_at"]
+}
