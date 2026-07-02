@@ -7,4 +7,5 @@ pub mod objective;
 pub mod ownership;
 pub mod interface_registry;
 pub mod permission;
+pub mod scheduler;
 pub mod state_machine;
