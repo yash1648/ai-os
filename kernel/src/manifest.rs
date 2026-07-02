@@ -102,6 +102,16 @@ pub struct ExecutionManifest {
     /// Dependency closure
     pub dependencies: Vec<String>,
 
+    /// Domains this manifest is scoped to operate within.
+    /// Stage 2+: used by the Permission Engine for scope checks.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+
+    /// Worker type for this manifest (coder, reviewer, guardian, etc.).
+    /// Stage 2+: determines worker pool routing and capability gating.
+    #[serde(default)]
+    pub worker_type: Option<String>,
+
     /// Schema compliance validation hash
     pub schema_version: String,
 
@@ -214,6 +224,8 @@ mod tests {
             }],
             environment: env,
             dependencies: vec![],
+            allowed_domains: vec![],
+            worker_type: None,
             schema_version: "https://ai-os.dev/schema/manifest/1.0".into(),
             created_at: Utc::now(),
             updated_at: Utc::now()

@@ -31,6 +31,8 @@ pub enum EventKind {
     HumanApprovalGranted,
     HumanApprovalDenied,
     PermissionDenied,
+    CrossDomainRequestRaised,
+    CrossDomainRequestResolved,
     SchedulingThrottled,
     StateTransitioned,
     ConstitutionAmended,
@@ -59,7 +61,7 @@ pub struct Actor {
     pub id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActorKind {
     Kernel,
