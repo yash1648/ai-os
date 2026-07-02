@@ -38,6 +38,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Schema generation & validation
+  # Schema generation & validation
+  schemars = { version = "0.8.21", features = ["uuid", "chrono"] }
+  validator = { version = "0.20", features = ["derive"] }
+
 # Concurrency
 dashmap = "6"
 

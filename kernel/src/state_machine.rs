@@ -247,7 +247,7 @@ pub fn transition(
         // ───────────────────────────────────────────────────────────────
 
         // Retry: failure → READY (if retries remain)
-        (ObjectiveState::Failure(fail_state),
+        (ObjectiveState::Failure(_fail_state),
          ObjectiveState::Primary(ObjectivePrimaryState::Ready)) => {
             if retry_count >= retry_policy.max_retries {
                 return Err(TransitionError::RetryLimitExhausted);
@@ -257,18 +257,6 @@ pub fn transition(
 
         // Give up: failure → ABANDONED
         (ObjectiveState::Failure(_),
-         ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned)) => true,
-
-        // Rollback resolution
-        (ObjectiveState::Failure(ObjectiveFailureState::Rollback),
-         ObjectiveState::Primary(ObjectivePrimaryState::Ready)) => {
-            if retry_count >= retry_policy.max_retries {
-                return Err(TransitionError::RetryLimitExhausted);
-            }
-            true
-        }
-
-        (ObjectiveState::Failure(ObjectiveFailureState::Rollback),
          ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned)) => true,
 
         // ═══════════════════════════════════════════════════════════════════
@@ -453,7 +441,7 @@ mod tests {
 
     #[test]
     fn abandoned_is_terminal() {
-        let policy = RetryPolicy::default();
+        let _policy = RetryPolicy::default();
         let abandoned = ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned);
         assert!(abandoned.is_terminal());
     }
