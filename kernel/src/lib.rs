@@ -1,3 +1,4 @@
+pub mod config;
 pub mod diff_applier;
 pub mod event_bus;
 pub mod manifest;

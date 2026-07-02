@@ -4,6 +4,7 @@
 // Phase 4 will wire this into a full daemon with CLI, API server, and
 // the end-to-end lifecycle loop.
 
+use ai_os_kernel::config::KernelConfig;
 use ai_os_kernel::diff_applier::{DiffApplier, StructuredDiff};
 use ai_os_kernel::state_machine;
 use clap::{Parser, Subcommand};
@@ -13,6 +14,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "ai-os", about = "AI-OS Kernel — deterministic orchestrator")]
 struct Cli {
+    /// Path to config file (TOML). Falls back to defaults + env vars when omitted.
+    #[arg(long, short = 'c', global = true)]
+    config: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -21,9 +26,9 @@ struct Cli {
 enum Commands {
     /// Run kernel daemon (the main entry point in production)
     Serve {
-        /// Database URL (default: sqlite://ai-os.db)
-        #[arg(long, default_value = "sqlite://ai-os.db")]
-        db: String,
+        /// Database URL (default: from config or sqlite://ai-os.db)
+        #[arg(long)]
+        db: Option<String>,
     },
     /// Check state machine transitions (read-only validation)
     Validate {
@@ -59,10 +64,27 @@ fn load_diff(path: &str) -> Result<StructuredDiff, String> {
 async fn main() {
     let cli = Cli::parse();
 
+    let config = KernelConfig::load(cli.config.as_deref())
+        .unwrap_or_else(|e| {
+            eprintln!("Configuration error:\n{e}");
+            std::process::exit(1);
+        });
+
+    if config.has_config_file() {
+        eprintln!("Loaded config from: {}", config.config_path.as_deref().unwrap());
+    }
+
     match &cli.command {
-        Some(Commands::Serve { db: _ }) => {
-            println!("AI-OS Kernel Stage 1 — serve mode coming in Phase 4.");
-            println!("For now, run `cargo test` to verify the kernel modules.");
+        Some(Commands::Serve { db }) => {
+            let database_url = db.clone().unwrap_or_else(|| config.database.url.clone());
+            eprintln!(
+                "AI-OS Kernel — serving on {}:{}, db: {}",
+                config.server.bind_address,
+                config.server.bind_port,
+                database_url,
+            );
+            eprintln!("Serve mode coming in Phase 4.");
+            eprintln!("For now, run `cargo test` to verify the kernel modules.");
         }
         Some(Commands::Validate { from, to }) => {
             let current = state_machine::ObjectiveState::from_label(from);
