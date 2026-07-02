@@ -8,4 +8,5 @@ pub mod ownership;
 pub mod interface_registry;
 pub mod permission;
 pub mod scheduler;
+pub mod execution_engine;
 pub mod state_machine;
