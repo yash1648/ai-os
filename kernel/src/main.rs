@@ -6,6 +6,7 @@
 
 use ai_os_kernel::config::KernelConfig;
 use ai_os_kernel::diff_applier::{DiffApplier, StructuredDiff};
+use ai_os_kernel::logging;
 use ai_os_kernel::state_machine;
 use clap::{Parser, Subcommand};
 use std::io::Read;
@@ -70,21 +71,23 @@ async fn main() {
             std::process::exit(1);
         });
 
+    let _log_guard = logging::init_logging(&config.logging);
+
     if config.has_config_file() {
-        eprintln!("Loaded config from: {}", config.config_path.as_deref().unwrap());
+        tracing::info!("Loaded config from: {}", config.config_path.as_deref().unwrap());
     }
 
     match &cli.command {
         Some(Commands::Serve { db }) => {
             let database_url = db.clone().unwrap_or_else(|| config.database.url.clone());
-            eprintln!(
+            tracing::info!(
                 "AI-OS Kernel — serving on {}:{}, db: {}",
                 config.server.bind_address,
                 config.server.bind_port,
                 database_url,
             );
-            eprintln!("Serve mode coming in Phase 4.");
-            eprintln!("For now, run `cargo test` to verify the kernel modules.");
+            println!("Serve mode coming in Phase 4.");
+            println!("For now, run `cargo test` to verify the kernel modules.");
         }
         Some(Commands::Validate { from, to }) => {
             let current = state_machine::ObjectiveState::from_label(from);

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod diff_applier;
 pub mod event_bus;
+pub mod logging;
 pub mod manifest;
 pub mod objective;
 pub mod ownership;
