@@ -3,4 +3,5 @@ pub mod event_bus;
 pub mod manifest;
 pub mod objective;
 pub mod ownership;
+pub mod permission;
 pub mod state_machine;
