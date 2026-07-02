@@ -10,7 +10,9 @@ use crate::state_machine::{ObjectiveState, ObjectiveTerminalState};
 pub struct Objective {
     pub id: String,
     pub title: String,
+    pub description: String,
     pub owner: String,
+    pub parent_id: Option<String>,
     pub priority: Priority,
     pub status: ObjectiveState,
     pub dependencies: Vec<String>,
@@ -25,6 +27,7 @@ pub struct Objective {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Priority {
+    Minimal,
     Low,
     Medium,
     High,
@@ -50,18 +53,20 @@ impl ObjectiveStore {
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS objectives (
-                id              TEXT PRIMARY KEY,
-                title           TEXT NOT NULL,
-                owner           TEXT NOT NULL,
-                priority        TEXT NOT NULL DEFAULT 'medium',
-                status          TEXT NOT NULL DEFAULT 'DISCOVERED',
-                dependencies    TEXT NOT NULL DEFAULT '[]',
+                id               TEXT PRIMARY KEY,
+                title            TEXT NOT NULL,
+                description      TEXT NOT NULL DEFAULT '',
+                owner            TEXT NOT NULL,
+                parent_id        TEXT,
+                priority         TEXT NOT NULL DEFAULT 'medium',
+                status           TEXT NOT NULL DEFAULT 'DISCOVERED',
+                dependencies     TEXT NOT NULL DEFAULT '[]',
                 success_criteria TEXT NOT NULL DEFAULT '[]',
-                plan_id         TEXT,
-                retry_count     INTEGER NOT NULL DEFAULT 0,
-                tags            TEXT NOT NULL DEFAULT '[]',
-                created_at      TEXT NOT NULL,
-                updated_at      TEXT NOT NULL
+                plan_id          TEXT,
+                retry_count      INTEGER NOT NULL DEFAULT 0,
+                tags             TEXT NOT NULL DEFAULT '[]',
+                created_at       TEXT NOT NULL,
+                updated_at       TEXT NOT NULL
             )
             "#,
         )
@@ -76,14 +81,17 @@ impl ObjectiveStore {
         sqlx::query(
             r#"
             INSERT INTO objectives
-                (id, title, owner, priority, status, dependencies,
-                 success_criteria, plan_id, retry_count, tags, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, title, description, owner, parent_id, priority, status,
+                 dependencies, success_criteria, plan_id, retry_count, tags,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&obj.id)
         .bind(&obj.title)
+        .bind(&obj.description)
         .bind(&obj.owner)
+        .bind(&obj.parent_id)
         .bind(serde_json::to_string(&obj.priority).unwrap_or_default())
         .bind(obj.status.label())
         .bind(serde_json::to_string(&obj.dependencies).unwrap_or_default())
@@ -173,7 +181,9 @@ impl ObjectiveStore {
 struct ObjectiveRow {
     id: String,
     title: String,
+    description: String,
     owner: String,
+    parent_id: Option<String>,
     priority: String,
     status: String,
     dependencies: String,
@@ -220,7 +230,9 @@ impl ObjectiveRow {
         Objective {
             id: self.id,
             title: self.title,
+            description: self.description,
             owner: self.owner,
+            parent_id: self.parent_id,
             priority: de(&self.priority),
             status: parse_state(&self.status)
                 .unwrap_or(ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned)),
