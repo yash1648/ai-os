@@ -54,6 +54,8 @@ parking_lot = "0.12"
 
 # Configuration
 toml = "0.8"
+serde_yaml = "0.9"
+globset = "0.4"
 
 # Metrics (lightweight)
 metrics = "0.24"
