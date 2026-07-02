@@ -1,0 +1,67 @@
+{
+  "$id": "verdict.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Verdict",
+  "description": "Review verdict for the AI-OS kernel. Captures the outcome of a code review pass.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "verdict_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this verdict."
+    },
+    "objective_id": {
+      "type": "string",
+      "description": "The objective this verdict reviews."
+    },
+    "reviewer": {
+      "type": "string",
+      "description": "The type of reviewer that issued this verdict.",
+      "enum": ["AutoReviewer", "Guardian", "Human"]
+    },
+    "status": {
+      "type": "string",
+      "description": "The verdict determination.",
+      "enum": ["Approved", "Rejected", "NeedsRevision"]
+    },
+    "comments": {
+      "type": "array",
+      "description": "Review comments keyed to specific files and lines.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "File path the comment refers to."
+          },
+          "line": {
+            "type": "integer",
+            "description": "Line number within the file (1-based)."
+          },
+          "message": {
+            "type": "string",
+            "description": "The review comment text."
+          },
+          "severity": {
+            "type": "string",
+            "description": "Severity level of the comment.",
+            "enum": ["info", "warning", "error", "critical"]
+          }
+        },
+        "required": ["file", "line", "message", "severity"]
+      }
+    },
+    "diff_approved": {
+      "type": "boolean",
+      "description": "Whether the diff under review is approved for merge."
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the review was completed."
+    }
+  },
+  "required": ["verdict_id", "objective_id", "reviewer", "status", "comments", "diff_approved", "completed_at"]
+}

@@ -1,0 +1,85 @@
+{
+  "$id": "event.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event",
+  "description": "Event envelope for the AI-OS kernel event bus. Validates the Event struct from docs/08-event-bus.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this event."
+    },
+    "kind": {
+      "type": "string",
+      "description": "The event type discriminator.",
+      "enum": [
+        "ObjectiveCreated",
+        "PlanGenerated",
+        "ExecutionStarted",
+        "ExecutionCompleted",
+        "ExecutionFailed",
+        "ReviewRequested",
+        "ReviewCompleted",
+        "ApprovalGranted",
+        "ApprovalRejected",
+        "PlanUpdated",
+        "WorkerAssigned",
+        "WorkerCompleted",
+        "WorkerFailed",
+        "MergeRequested",
+        "MergeCompleted",
+        "MergeFailed",
+        "GatePassed",
+        "GateFailed",
+        "EventBusError"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the event was emitted."
+    },
+    "objective_id": {
+      "type": "string",
+      "description": "Optional reference to the objective this event relates to."
+    },
+    "plan_id": {
+      "type": "string",
+      "description": "Optional reference to the plan this event relates to."
+    },
+    "actor": {
+      "type": "object",
+      "description": "The entity that produced this event.",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The category of actor.",
+          "enum": ["Kernel", "Worker", "Reviewer", "Guardian", "Human", "Scheduler"]
+        },
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the specific actor instance."
+        }
+      },
+      "required": ["kind", "id"]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Arbitrary JSON data carried by the event."
+    },
+    "causation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Optional UUID of the event that directly caused this event."
+    },
+    "correlation_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Optional UUID linking all events in the same logical workflow."
+    }
+  },
+  "required": ["event_id", "kind", "timestamp", "actor", "payload"]
+}
