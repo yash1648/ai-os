@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -64,7 +63,7 @@ pub struct WorkerMetrics {
 pub struct WorkerPool {
     max_concurrent: usize,
     active: HashMap<String, WorkerHandle>,
-    completed: Vec<WorkerResult>,
+    _completed: Vec<WorkerResult>,
     total_spawned: AtomicUsize,
     event_bus: Option<Arc<EventBus>>,
 }
@@ -74,7 +73,7 @@ impl WorkerPool {
         Self {
             max_concurrent,
             active: HashMap::new(),
-            completed: Vec::new(),
+            _completed: Vec::new(),
             total_spawned: AtomicUsize::new(0),
             event_bus: None,
         }
@@ -115,7 +114,7 @@ impl WorkerPool {
             Uuid::new_v4().to_string().split_at(8).0
         );
 
-        let obj_id = objective_id.to_string();
+        let _obj_id = objective_id.to_string();
         let wid = worker_id.clone();
 
         let handle = tokio::spawn(async move {

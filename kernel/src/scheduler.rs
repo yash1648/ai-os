@@ -246,7 +246,7 @@ impl Scheduler {
         self.total_dispatched += 1;
 
         self.emit_event(
-            EventKind::WorkerStarted,
+            EventKind::DispatchDecision,
             serde_json::json!({
                 "objective_id": &entry.objective_id,
                 "priority": serde_json::to_value(&entry.priority).unwrap_or_default(),
@@ -547,7 +547,7 @@ mod tests {
 
         match rx.try_recv() {
             Ok(event) => {
-                assert!(matches!(event.kind, EventKind::WorkerStarted));
+                assert!(matches!(event.kind, EventKind::DispatchDecision));
                 assert_eq!(
                     event.payload.get("objective_id").and_then(|v| v.as_str()),
                     Some("obj-1")
@@ -581,9 +581,9 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        // First event should be WorkerStarted, second is SchedulingThrottled
-        let ev1 = rx.try_recv().expect("Expected WorkerStarted");
-        assert!(matches!(ev1.kind, EventKind::WorkerStarted));
+        // First event should be DispatchDecision, second is SchedulingThrottled
+        let ev1 = rx.try_recv().expect("Expected DispatchDecision");
+        assert!(matches!(ev1.kind, EventKind::DispatchDecision));
 
         let ev2 = rx.try_recv().expect("Expected SchedulingThrottled");
         assert!(matches!(ev2.kind, EventKind::SchedulingThrottled));

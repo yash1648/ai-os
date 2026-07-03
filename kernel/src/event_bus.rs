@@ -36,6 +36,7 @@ pub enum EventKind {
     CrossDomainRequestRaised,
     CrossDomainRequestResolved,
     SchedulingThrottled,
+    DispatchDecision,
     StateTransitioned,
     ConstitutionAmended,
 }
