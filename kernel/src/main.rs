@@ -4,13 +4,19 @@
 // Phase 4 will wire this into a full daemon with CLI, API server, and
 // the end-to-end lifecycle loop.
 
+use ai_os_kernel::api::AppState;
 use ai_os_kernel::config::KernelConfig;
+use ai_os_kernel::config::SchedulerConfig;
 use ai_os_kernel::diff_applier::{DiffApplier, StructuredDiff};
+use ai_os_kernel::event_bus::EventBus;
 use ai_os_kernel::logging;
+use ai_os_kernel::scheduler::Scheduler;
 use ai_os_kernel::state_machine;
 use clap::{Parser, Subcommand};
 use std::io::Read;
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser)]
 #[command(name = "ai-os", about = "AI-OS Kernel — deterministic orchestrator")]
@@ -80,14 +86,43 @@ async fn main() {
     match &cli.command {
         Some(Commands::Serve { db }) => {
             let database_url = db.clone().unwrap_or_else(|| config.database.url.clone());
+            let bind_addr: SocketAddr = format!(
+                "{}:{}",
+                config.server.bind_address,
+                config.server.bind_port,
+            )
+            .parse()
+            .expect("Invalid bind address in config");
+
             tracing::info!(
                 "AI-OS Kernel — serving on {}:{}, db: {}",
                 config.server.bind_address,
                 config.server.bind_port,
                 database_url,
             );
-            println!("Serve mode coming in Phase 4.");
-            println!("For now, run `cargo test` to verify the kernel modules.");
+
+            let scheduler_cfg = SchedulerConfig {
+                max_concurrent_objectives: config.scheduler.max_concurrent_objectives,
+                max_retries: config.scheduler.max_retries,
+            };
+
+            let event_bus = EventBus::new();
+            let scheduler = Scheduler::new(scheduler_cfg);
+            let state = Arc::new(AppState {
+                config: config.clone(),
+                scheduler: tokio::sync::Mutex::new(scheduler),
+                event_bus: event_bus.clone(),
+            });
+
+            let app = ai_os_kernel::api::router(state);
+
+            tracing::info!("API server listening on {bind_addr}");
+            let listener = tokio::net::TcpListener::bind(&bind_addr)
+                .await
+                .expect("Failed to bind TCP listener");
+            axum::serve(listener, app)
+                .await
+                .expect("Server exited with error");
         }
         Some(Commands::Validate { from, to }) => {
             let current = state_machine::ObjectiveState::from_label(from);

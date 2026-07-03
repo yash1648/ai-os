@@ -1,12 +1,14 @@
+pub mod api;
 pub mod config;
+pub mod coordinator;
 pub mod diff_applier;
 pub mod event_bus;
+pub mod execution_engine;
+pub mod interface_registry;
 pub mod logging;
 pub mod manifest;
 pub mod objective;
 pub mod ownership;
-pub mod interface_registry;
 pub mod permission;
 pub mod scheduler;
-pub mod execution_engine;
 pub mod state_machine;
