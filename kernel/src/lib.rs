@@ -1,6 +1,7 @@
 pub mod api;
 pub mod config;
 pub mod coordinator;
+pub mod dashboard;
 pub mod diff_applier;
 pub mod event_bus;
 pub mod execution_engine;
