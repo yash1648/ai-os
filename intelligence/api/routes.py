@@ -13,7 +13,10 @@ from fastapi import APIRouter, Query, Request
 from intelligence.api.models import (
     AdrSearchResultItem,
     ConstitutionSectionItem,
+    DependencyEdgeItem,
+    DependencyGraphStatsItem,
     PilHealth,
+    ResolvedDependenciesItem,
     SemanticSearchResultItem,
     SymbolDefItem,
 )
@@ -191,5 +194,79 @@ async def indexer_status(request: Request) -> dict:
         "data": {
             "total_files": idx.count(),
             "extensions": sorted({f.ext for f in idx.files}),
+        },
+    }
+
+
+# ── dependency graph ────────────────────────────────────────────────────────────
+
+
+@router.get("/dependency/resolve")
+async def dependency_resolve(
+    request: Request,
+    name: str = Query(..., description="Module or file name to query (substring match)."),
+) -> dict:
+    """Resolve dependencies and dependents for a given module/file name.
+
+    The kernel's ``PilClient`` calls this to understand what imports a
+    particular module and what it imports in turn.
+    """
+    state = _get_state(request)
+    graph = state.dependency_graph
+    resolved = graph.resolve(name)
+    return {
+        "success": True,
+        "data": ResolvedDependenciesItem(
+            dependents=[
+                DependencyEdgeItem(
+                    source_file=e.source_file,
+                    source_line=e.source_line,
+                    target=e.target,
+                    kind=e.kind,
+                )
+                for e in resolved.dependents
+            ],
+            dependencies=[
+                DependencyEdgeItem(
+                    source_file=e.source_file,
+                    source_line=e.source_line,
+                    target=e.target,
+                    kind=e.kind,
+                )
+                for e in resolved.dependencies
+            ],
+        ).model_dump(),
+    }
+
+
+@router.get("/dependency/graph")
+async def dependency_graph_endpoint(
+    request: Request,
+) -> dict:
+    """Return full dependency graph statistics and all edges.
+
+    Useful for programmatic analysis and dashboard visualisation.
+    """
+    state = _get_state(request)
+    graph = state.dependency_graph
+    s = graph.stats()
+    edges = graph.all_edges()
+    return {
+        "success": True,
+        "data": {
+            "stats": DependencyGraphStatsItem(
+                node_count=s.node_count,
+                edge_count=s.edge_count,
+                languages=s.languages,
+            ).model_dump(),
+            "edges": [
+                DependencyEdgeItem(
+                    source_file=e.source_file,
+                    source_line=e.source_line,
+                    target=e.target,
+                    kind=e.kind,
+                )
+                for e in edges
+            ],
         },
     }
