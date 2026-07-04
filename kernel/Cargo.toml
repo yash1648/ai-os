@@ -59,6 +59,9 @@ toml = "0.8"
 serde_yaml = "0.9"
 globset = "0.4"
 
+# Hash-chain (audit log)
+sha2 = "0.10"
+
 # Metrics (lightweight)
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"

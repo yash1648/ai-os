@@ -24,6 +24,7 @@ use crate::coordinator::Coordinator;
 use crate::event_bus::{Event as BusEvent, EventBus};
 use crate::objective::{Objective, ObjectiveStore};
 use crate::scheduler::Scheduler;
+use crate::dashboard;
 use crate::state_machine::{self, ObjectivePrimaryState, ObjectiveState, RetryPolicy};
 
 // ---------------------------------------------------------------------------
@@ -116,22 +117,22 @@ struct RecentEventsParams {
 }
 
 #[derive(Deserialize)]
-struct TimelineParams {
-    from: Option<String>,
-    to: Option<String>,
-    limit: Option<i64>,
+pub struct TimelineParams {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Serialize)]
-struct TimelineEvent {
-    event_id: String,
-    kind: String,
-    timestamp: String,
-    objective_id: Option<String>,
-    plan_id: Option<String>,
-    actor: serde_json::Value,
-    payload: serde_json::Value,
-    sequence: i64,
+pub struct TimelineEvent {
+    pub event_id: String,
+    pub kind: String,
+    pub timestamp: String,
+    pub objective_id: Option<String>,
+    pub plan_id: Option<String>,
+    pub actor: serde_json::Value,
+    pub payload: serde_json::Value,
+    pub sequence: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +182,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/events/recent", get(event_recent_handler))
         .route("/api/v1/events/timeline", get(event_timeline_handler))
+        // Dashboard — timeline, objectives, metrics, audit log
+        .route("/api/dashboard/timeline", get(dashboard::timeline_handler))
+        .route("/api/dashboard/objectives", get(dashboard::objectives_handler))
+        .route("/api/dashboard/metrics", get(dashboard::metrics_handler))
+        .route("/api/dashboard/audit-log", get(dashboard::audit_log_handler))
         .with_state(state)
 }
 
