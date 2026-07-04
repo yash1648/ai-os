@@ -9,6 +9,7 @@ pub mod logging;
 pub mod manifest;
 pub mod objective;
 pub mod ownership;
+pub mod pil_client;
 pub mod permission;
 pub mod scheduler;
 pub mod state_machine;
