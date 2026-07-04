@@ -205,7 +205,7 @@ pub fn transition(
          ObjectiveState::Primary(ObjectivePrimaryState::Integration)) => true,
 
         (ObjectiveState::Primary(ObjectivePrimaryState::Integration),
-         ObjectiveState::Primary(ObjectivePrimaryState::Done)) => true,
+         ObjectiveState::Terminal(ObjectiveTerminalState::Done)) => true,
 
         // ═══════════════════════════════════════════════════════════════════
         // Failure transitions — from each primary state to its corresponding
@@ -314,13 +314,14 @@ pub fn legal_transitions(state: ObjectiveState) -> Vec<ObjectiveState> {
         }
         ObjectiveState::Primary(ObjectivePrimaryState::Integration) => {
             vec![
-                ObjectiveState::Primary(ObjectivePrimaryState::Done),
+                ObjectiveState::Terminal(ObjectiveTerminalState::Done),
                 ObjectiveState::Failure(ObjectiveFailureState::IntegrationFailure),
                 ObjectiveState::Failure(ObjectiveFailureState::HumanRejected),
                 ObjectiveState::Failure(ObjectiveFailureState::Rollback),
             ]
         }
         ObjectiveState::Primary(ObjectivePrimaryState::Done) => vec![],
+        ObjectiveState::Terminal(ObjectiveTerminalState::Done) => vec![],
         ObjectiveState::Failure(f) => match f {
             ObjectiveFailureState::Rollback => {
                 vec![
@@ -360,7 +361,7 @@ mod tests {
             ObjectiveState::Primary(ObjectivePrimaryState::Executing),
             ObjectiveState::Primary(ObjectivePrimaryState::Review),
             ObjectiveState::Primary(ObjectivePrimaryState::Integration),
-            ObjectiveState::Primary(ObjectivePrimaryState::Done),
+            ObjectiveState::Terminal(ObjectiveTerminalState::Done),
         ];
 
         let mut current = states[0];
@@ -377,20 +378,20 @@ mod tests {
     #[test]
     fn cannot_go_backward() {
         let policy = RetryPolicy::default();
-        let forward = vec![
-            ObjectivePrimaryState::Discovered,
-            ObjectivePrimaryState::Planned,
-            ObjectivePrimaryState::Ready,
-            ObjectivePrimaryState::Executing,
-            ObjectivePrimaryState::Review,
-            ObjectivePrimaryState::Integration,
-            ObjectivePrimaryState::Done,
+        let forward: Vec<ObjectiveState> = vec![
+            ObjectiveState::Primary(ObjectivePrimaryState::Discovered),
+            ObjectiveState::Primary(ObjectivePrimaryState::Planned),
+            ObjectiveState::Primary(ObjectivePrimaryState::Ready),
+            ObjectiveState::Primary(ObjectivePrimaryState::Executing),
+            ObjectiveState::Primary(ObjectivePrimaryState::Review),
+            ObjectiveState::Primary(ObjectivePrimaryState::Integration),
+            ObjectiveState::Terminal(ObjectiveTerminalState::Done),
         ];
 
         for i in 1..forward.len() {
-            let from = ObjectiveState::Primary(forward[i]);
+            let from = forward[i];
             for j in 0..i {
-                let to = ObjectiveState::Primary(forward[j]);
+                let to = forward[j];
                 let result = transition(from, to, &policy, 0);
                 assert!(result.is_err(), "Should not be able to go from {} to {}",
                     from.label(), to.label());
@@ -507,7 +508,7 @@ mod tests {
             ObjectiveState::Primary(ObjectivePrimaryState::Executing),
             ObjectiveState::Primary(ObjectivePrimaryState::Review),
             ObjectiveState::Primary(ObjectivePrimaryState::Integration),
-            ObjectiveState::Primary(ObjectivePrimaryState::Done),
+            ObjectiveState::Terminal(ObjectiveTerminalState::Done),
             ObjectiveState::Failure(ObjectiveFailureState::ReviewFailure),
             ObjectiveState::Failure(ObjectiveFailureState::Rollback),
             ObjectiveState::Terminal(ObjectiveTerminalState::Done),

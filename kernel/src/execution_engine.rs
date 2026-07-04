@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::task::JoinHandle;
+pub(crate) use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::event_bus::{Actor, ActorKind, Event, EventBus, EventKind};
@@ -134,6 +134,13 @@ impl WorkerPool {
         self.emit_event(EventKind::WorkerStarted, objective_id, Some(&worker_id));
 
         Some(worker_id)
+    }
+
+    /// Remove and return the JoinHandle for a running worker by objective_id.
+    /// The caller takes ownership of the handle and must await it to collect
+    /// the worker's completion.
+    pub fn take_handle(&mut self, objective_id: &str) -> Option<JoinHandle<()>> {
+        self.active.remove(objective_id).map(|h| h.handle)
     }
 
     pub fn cancel(&mut self, objective_id: &str) -> bool {

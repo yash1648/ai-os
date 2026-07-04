@@ -36,24 +36,23 @@ fn objective_lifecycle_with_diff() {
     let policy = RetryPolicy::default();
     let mut state = ObjectiveState::Primary(ObjectivePrimaryState::Discovered);
 
-    let expected = [
-        ObjectivePrimaryState::Discovered,
-        ObjectivePrimaryState::Planned,
-        ObjectivePrimaryState::Ready,
-        ObjectivePrimaryState::Executing,
-        ObjectivePrimaryState::Review,
-        ObjectivePrimaryState::Integration,
-        ObjectivePrimaryState::Done,
+    let expected: Vec<ObjectiveState> = vec![
+        ObjectiveState::Primary(ObjectivePrimaryState::Discovered),
+        ObjectiveState::Primary(ObjectivePrimaryState::Planned),
+        ObjectiveState::Primary(ObjectivePrimaryState::Ready),
+        ObjectiveState::Primary(ObjectivePrimaryState::Executing),
+        ObjectiveState::Primary(ObjectivePrimaryState::Review),
+        ObjectiveState::Primary(ObjectivePrimaryState::Integration),
+        ObjectiveState::Terminal(ObjectiveTerminalState::Done),
     ];
 
-    for &next in &expected[1..] {
-        let target = ObjectiveState::Primary(next);
-        state = state_machine::transition(state, target, &policy, 0).unwrap();
+    for target in &expected[1..] {
+        state = state_machine::transition(state, *target, &policy, 0).unwrap();
     }
 
     assert_eq!(
         state,
-        ObjectiveState::Primary(ObjectivePrimaryState::Done)
+        ObjectiveState::Terminal(ObjectiveTerminalState::Done)
     );
 
     // Phase 2: Create a file (simulates a worker producing output)
@@ -585,4 +584,407 @@ fn stage2_full_workflow_ownership_permits_worker_operations() {
     // The same worker should be denied writing to docs
     let result = engine.check_worker_write("worker-001", "docs/architecture.md", &manifest);
     assert!(!result.is_allowed(), "Worker should be denied writing outside domain scope");
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// API — Objective Lifecycle (via HTTP Router)
+// ═════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod api_objective_lifecycle {
+    use ai_os_kernel::api::{self, AppState};
+    use ai_os_kernel::config::{KernelConfig, SchedulerConfig};
+    use ai_os_kernel::coordinator::Coordinator;
+    use ai_os_kernel::event_bus::{Actor, ActorKind, Event as BusEvent, EventBus, EventKind};
+    use ai_os_kernel::objective::ObjectiveStore;
+    use ai_os_kernel::scheduler::Scheduler;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn test_app_state() -> (Arc<AppState>, Arc<ObjectiveStore>) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory SQLite pool");
+
+        let store = Arc::new(
+            ObjectiveStore::new(pool.clone())
+                .await
+                .expect("Failed to create ObjectiveStore"),
+        );
+
+        // Initialize the events table so replay methods work.
+        ai_os_kernel::event_bus::init_event_store(&pool)
+            .await
+            .expect("Failed to init event store");
+
+        let scheduler = Arc::new(tokio::sync::Mutex::new(
+            Scheduler::new(SchedulerConfig::default()),
+        ));
+        let event_bus = EventBus::new().with_persistence(pool.clone());
+        let config = KernelConfig::default();
+
+        let coordinator = Coordinator::new()
+            .with_objective_store(store.clone())
+            .with_scheduler(scheduler.clone());
+
+        let state = Arc::new(AppState {
+            objective_store: store.clone(),
+            scheduler,
+            coordinator: tokio::sync::Mutex::new(coordinator),
+            event_bus,
+            config,
+            started_at: chrono::Utc::now(),
+        });
+
+        (state, store)
+    }
+
+    async fn body_json(body: Body) -> Value {
+        let bytes = body.collect().await.expect("Failed to collect body").to_bytes();
+        serde_json::from_slice(&bytes).expect("Failed to parse JSON body")
+    }
+
+    #[tokio::test]
+    async fn objective_crud_lifecycle() {
+        let (state, _store) = test_app_state().await;
+        let app = api::router(state);
+
+        let create_body = serde_json::json!({
+            "title": "Test objective",
+            "description": "Created in integration test",
+            "owner": "sisyphus",
+            "priority": "high",
+            "dependencies": [],
+            "success_criteria": ["all tests pass"],
+            "tags": ["test", "integration"]
+        });
+
+        let req = Request::post("/api/v1/objectives")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&create_body).unwrap()))
+            .unwrap();
+
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        let obj_id = json["data"]["id"].as_str().unwrap().to_string();
+        assert!(!obj_id.is_empty());
+
+        let req = Request::get("/api/v1/objectives")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let req = Request::get(format!("/api/v1/objectives/{obj_id}"))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        assert_eq!(json["data"]["title"], "Test objective");
+        assert_eq!(json["data"]["status"]["Primary"], "Discovered");
+
+        let req = Request::get("/api/v1/objectives/nonexistent-id")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn objective_rejects_invalid_priority() {
+        let (state, _) = test_app_state().await;
+        let app = api::router(state);
+
+        let create_body = serde_json::json!({
+            "title": "Bad priority",
+            "description": "Should be rejected",
+            "owner": "sisyphus",
+            "priority": "ultra-high",
+            "dependencies": [],
+            "success_criteria": [],
+            "tags": []
+        });
+
+        let req = Request::post("/api/v1/objectives")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&create_body).unwrap()))
+            .unwrap();
+
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(!json["success"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn objective_delete_abandons() {
+        let (state, store) = test_app_state().await;
+        let app = api::router(state);
+
+        let create_body = serde_json::json!({
+            "title": "To abandon",
+            "description": "Will be abandoned via DELETE",
+            "owner": "sisyphus",
+            "priority": "low",
+            "dependencies": [],
+            "success_criteria": [],
+            "tags": []
+        });
+        let req = Request::post("/api/v1/objectives")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&create_body).unwrap()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let json: Value = body_json(res.into_body()).await;
+        let obj_id = json["data"]["id"].as_str().unwrap().to_string();
+
+        let req = Request::delete(format!("/api/v1/objectives/{obj_id}"))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        assert_eq!(json["data"]["status"], "abandoned");
+
+        let obj = store.get(&obj_id).await.unwrap().unwrap();
+        assert_eq!(obj.status.label(), "ABANDONED");
+    }
+
+    #[tokio::test]
+    async fn objective_delete_nonexistent_returns_404() {
+        let (state, _) = test_app_state().await;
+        let app = api::router(state);
+
+        let req = Request::delete("/api/v1/objectivities/missing-id")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn health_endpoint() {
+        let (state, _) = test_app_state().await;
+        let app = api::router(state);
+
+        let req = Request::get("/api/v1/health")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        assert_eq!(json["data"]["status"], "ok");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Stage 3 — Event Timeline API
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn event_objective_timeline_returns_ordered_events() {
+        let (state, _store) = test_app_state().await;
+        let event_bus = state.event_bus.clone();
+        let app = api::router(state);
+
+        let obj_id = uuid::Uuid::new_v4().to_string();
+
+        // Publish two events for this objective so the timeline has data
+        event_bus.publish(
+            BusEvent::new(EventKind::ObjectiveCreated, Actor { kind: ActorKind::Kernel, id: "test".into() }, serde_json::json!({"title": "timeline test"}))
+                .with_objective(&obj_id),
+        );
+        event_bus.publish(
+            BusEvent::new(EventKind::WorkerStarted, Actor { kind: ActorKind::Worker, id: "w1".into() }, serde_json::json!({}))
+                .with_objective(&obj_id),
+        );
+
+        // Allow the async DB writes to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Query objective timeline
+        let req = Request::get(format!("/api/v1/events/objective/{obj_id}"))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        let events = json["data"].as_array().unwrap();
+        assert!(!events.is_empty(), "Objective timeline should have events");
+        assert_eq!(events[0]["objective_id"], obj_id);
+    }
+
+    #[tokio::test]
+    async fn event_recent_returns_events_with_limit() {
+        let (state, _store) = test_app_state().await;
+        let app = api::router(state);
+
+        let req = Request::get("/api/v1/events/recent?limit=5")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn event_recent_defaults_to_reasonable_limit() {
+        let (state, _store) = test_app_state().await;
+        let app = api::router(state);
+
+        let req = Request::get("/api/v1/events/recent")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn event_timeline_with_time_range() {
+        let (state, _store) = test_app_state().await;
+        let app = api::router(state);
+        let create_body = serde_json::json!({
+            "title": "Range test",
+            "description": "Test timeline range endpoint",
+            "owner": "sisyphus",
+            "priority": "medium",
+            "dependencies": [],
+            "success_criteria": ["works"],
+            "tags": []
+        });
+        let req = Request::post("/api/v1/objectives")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&create_body).unwrap()))
+            .unwrap();
+        let _ = app.clone().oneshot(req).await.unwrap();
+
+        let now = chrono::Utc::now();
+        let from = (now - chrono::Duration::hours(1)).to_rfc3339();
+        let to = (now + chrono::Duration::hours(1)).to_rfc3339();
+
+        let req = Request::get(format!(
+            "/api/v1/events/timeline?from={from}&to={to}&limit=10"
+        ))
+        .body(Body::empty())
+        .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn objective_timeline_for_nonexistent_objective_returns_empty() {
+        let (state, _store) = test_app_state().await;
+        let app = api::router(state);
+
+        let req = Request::get("/api/v1/events/objective/nonexistent-id")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        let events = json["data"].as_array().unwrap();
+        assert!(events.is_empty(), "Non-existent objective should have no events");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // E2E — Full objective lifecycle (the core loop)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[tokio::test]
+    async fn e2e_full_lifecycle_create_through_done() {
+        let (state, store) = test_app_state().await;
+        let app = api::router(state);
+
+        // ── Step 1: Create objective ────────────────────────────────
+        let create_body = serde_json::json!({
+            "title": "E2E lifecycle test",
+            "description": "Tests the full create → dispatch → done path",
+            "owner": "sisyphus",
+            "priority": "high",
+            "dependencies": [],
+            "success_criteria": ["it works"],
+            "tags": ["e2e"]
+        });
+
+        let req = Request::post("/api/v1/objectives")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&create_body).unwrap()))
+            .unwrap();
+
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        let obj_id = json["data"]["id"].as_str().unwrap().to_string();
+        assert!(!obj_id.is_empty());
+
+        // Verify initial state
+        let obj = store.get(&obj_id).await.unwrap().unwrap();
+        assert_eq!(obj.status.label(), "DISCOVERED");
+
+        // ── Step 2: Mark ready ─────────────────────────────────────
+        let req = Request::post(format!("/api/v1/objectives/{obj_id}/ready"))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+
+        // Verify READY state persisted
+        let obj = store.get(&obj_id).await.unwrap().unwrap();
+        assert_eq!(obj.status.label(), "READY");
+
+        // ── Step 3: Dispatch ────────────────────────────────────────
+        let req = Request::post("/api/v1/scheduler/dispatch")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        assert!(json["data"]["dispatched"].as_str().is_some(), "Expected a dispatched objective");
+
+        // ── Step 4: Wait for completion (background transitions) ────
+        // The coordinator's dispatch_and_monitor spawns a tokio task:
+        //   Executing → Review → Integration → Done
+        // Poll until Done (with timeout).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut final_label;
+        loop {
+            let obj = store.get(&obj_id).await.unwrap().unwrap();
+            final_label = obj.status.label().to_string();
+            if final_label == "DONE" {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!(
+                    "Timed out waiting for objective to reach DONE. Last status: {final_label}"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        // ── Step 5: Verify final state ─────────────────────────────
+        assert_eq!(final_label, "DONE", "Objective should have completed the full lifecycle");
+        let obj = store.get(&obj_id).await.unwrap().unwrap();
+        assert_eq!(obj.status.label(), "DONE");
+    }
 }

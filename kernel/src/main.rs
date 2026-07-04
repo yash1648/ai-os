@@ -7,9 +7,11 @@
 use ai_os_kernel::api::AppState;
 use ai_os_kernel::config::KernelConfig;
 use ai_os_kernel::config::SchedulerConfig;
+use ai_os_kernel::coordinator::Coordinator;
 use ai_os_kernel::diff_applier::{DiffApplier, StructuredDiff};
 use ai_os_kernel::event_bus::EventBus;
 use ai_os_kernel::logging;
+use ai_os_kernel::objective::ObjectiveStore;
 use ai_os_kernel::scheduler::Scheduler;
 use ai_os_kernel::state_machine;
 use clap::{Parser, Subcommand};
@@ -108,10 +110,31 @@ async fn main() {
 
             let event_bus = EventBus::new();
             let scheduler = Scheduler::new(scheduler_cfg);
+
+            // Initialize persistent store
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect(&database_url)
+                .await
+                .expect("Failed to connect to database");
+            let objective_store = ObjectiveStore::new(pool)
+                .await
+                .expect("Failed to initialize objective store");
+            let objective_store_arc = Arc::new(objective_store);
+            let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
+
+            let coordinator = Coordinator::new()
+                .with_event_bus(Arc::new(event_bus.clone()))
+                .with_objective_store(objective_store_arc.clone())
+                .with_scheduler(scheduler_arc.clone());
+
             let state = Arc::new(AppState {
                 config: config.clone(),
-                scheduler: tokio::sync::Mutex::new(scheduler),
+                scheduler: scheduler_arc,
+                coordinator: tokio::sync::Mutex::new(coordinator),
                 event_bus: event_bus.clone(),
+                objective_store: objective_store_arc,
+                started_at: chrono::Utc::now(),
             });
 
             let app = ai_os_kernel::api::router(state);

@@ -278,6 +278,34 @@ fn default_enforce_ownership() -> bool {
     true
 }
 
+/// PIL (Python Intelligence Layer) sidecar connection configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PilConfig {
+    /// Base URL of the PIL sidecar.
+    #[serde(default = "default_pil_url")]
+    pub url: String,
+    /// Request timeout in seconds.
+    #[serde(default = "default_pil_timeout")]
+    pub timeout_secs: u64,
+}
+
+impl Default for PilConfig {
+    fn default() -> Self {
+        Self {
+            url: default_pil_url(),
+            timeout_secs: default_pil_timeout(),
+        }
+    }
+}
+
+fn default_pil_url() -> String {
+    "http://127.0.0.1:8082".to_string()
+}
+
+fn default_pil_timeout() -> u64 {
+    30
+}
+
 // ---------------------------------------------------------------------------
 // Top-level KernelConfig
 // ---------------------------------------------------------------------------
@@ -477,6 +505,7 @@ impl KernelConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     fn sample_toml() -> &'static str {
         r#"
@@ -558,6 +587,7 @@ workspace_root = "/custom/workspace"
     }
 
     #[test]
+    #[serial]
     fn env_overrides_apply() {
         // Set env vars atomically for this test.
         unsafe {
@@ -660,6 +690,7 @@ workspace_root = "/tmp/valid-workspace"
     }
 
     #[test]
+    #[serial]
     fn load_returns_default_for_none_path() {
         let config = KernelConfig::load(None).unwrap();
         assert!(!config.has_config_file());

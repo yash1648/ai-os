@@ -253,3 +253,173 @@ impl ObjectiveRow {
 
 // ── Serialization helpers stored in state_machine.rs ──────────────────────
 // (we add from_label there)
+
+// ═════════════════════════════════════════════════════════════════════════
+// Tests
+// ═════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state_machine::{ObjectivePrimaryState, ObjectiveTerminalState};
+
+    /// Create a fresh in-memory SQLite pool with the objectives table initialized.
+    async fn init_test_store() -> ObjectiveStore {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory SQLite pool");
+        ObjectiveStore::new(pool)
+            .await
+            .expect("Failed to init objectives table")
+    }
+
+    fn sample_objective(id: &str, status: ObjectiveState) -> Objective {
+        Objective {
+            id: id.to_string(),
+            title: "Test Objective".into(),
+            description: "A test".into(),
+            owner: "test-user".into(),
+            parent_id: None,
+            priority: Priority::Medium,
+            status,
+            dependencies: vec![],
+            success_criteria: vec!["pass".into()],
+            plan_id: None,
+            retry_count: 0,
+            tags: vec!["test".into()],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    // ── Insert + Get ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn store_insert_and_get() {
+        let store = init_test_store().await;
+        let obj = sample_objective("obj-1", ObjectiveState::Primary(ObjectivePrimaryState::Discovered));
+        store.insert(&obj).await.expect("insert failed");
+
+        let fetched = store.get("obj-1").await.expect("get failed");
+        assert!(fetched.is_some());
+        assert_eq!(fetched.as_ref().unwrap().id, "obj-1");
+        assert_eq!(fetched.as_ref().unwrap().title, "Test Objective");
+        assert_eq!(fetched.as_ref().unwrap().status.label(), "DISCOVERED");
+    }
+
+    #[tokio::test]
+    async fn store_get_nonexistent() {
+        let store = init_test_store().await;
+        let fetched = store.get("nonexistent").await.expect("get failed");
+        assert!(fetched.is_none());
+    }
+
+    // ── Update status ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn store_update_status() {
+        let store = init_test_store().await;
+        let obj = sample_objective("obj-upd", ObjectiveState::Primary(ObjectivePrimaryState::Discovered));
+        store.insert(&obj).await.expect("insert failed");
+
+        let new_status = ObjectiveState::Primary(ObjectivePrimaryState::Ready);
+        let updated = store.update_status("obj-upd", &new_status, 0).await.expect("update failed");
+        assert!(updated, "update_status should return true when row affected");
+
+        let fetched = store.get("obj-upd").await.expect("get failed").unwrap();
+        assert_eq!(fetched.status.label(), "READY");
+    }
+
+    #[tokio::test]
+    async fn store_update_status_nonexistent() {
+        let store = init_test_store().await;
+        let new_status = ObjectiveState::Primary(ObjectivePrimaryState::Ready);
+        let updated = store.update_status("no-such-id", &new_status, 0).await.expect("update failed");
+        assert!(!updated, "update_status on nonexistent id should return false");
+    }
+
+    #[tokio::test]
+    async fn store_update_status_retry_count() {
+        let store = init_test_store().await;
+        let obj = sample_objective("obj-retry", ObjectiveState::Primary(ObjectivePrimaryState::Discovered));
+        store.insert(&obj).await.expect("insert failed");
+
+        store.update_status("obj-retry", &ObjectiveState::Primary(ObjectivePrimaryState::Ready), 0).await.unwrap();
+        store.update_status("obj-retry", &ObjectiveState::Primary(ObjectivePrimaryState::Discovered), 4).await.unwrap();
+
+        let fetched = store.get("obj-retry").await.expect("get failed").unwrap();
+        assert_eq!(fetched.retry_count, 4);
+    }
+
+    // ── List ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn store_list_all() {
+        let store = init_test_store().await;
+        store.insert(&sample_objective("a", ObjectiveState::Primary(ObjectivePrimaryState::Discovered))).await.unwrap();
+        store.insert(&sample_objective("b", ObjectiveState::Primary(ObjectivePrimaryState::Ready))).await.unwrap();
+        store.insert(&sample_objective("c", ObjectiveState::Terminal(ObjectiveTerminalState::Done))).await.unwrap();
+
+        let all = store.list(None).await.expect("list failed");
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn store_list_filtered_by_status() {
+        let store = init_test_store().await;
+        store.insert(&sample_objective("a", ObjectiveState::Primary(ObjectivePrimaryState::Discovered))).await.unwrap();
+        store.insert(&sample_objective("b", ObjectiveState::Primary(ObjectivePrimaryState::Ready))).await.unwrap();
+        store.insert(&sample_objective("c", ObjectiveState::Primary(ObjectivePrimaryState::Ready))).await.unwrap();
+
+        let ready = store.list(Some("READY")).await.expect("list failed");
+        assert_eq!(ready.len(), 2);
+        for obj in &ready {
+            assert_eq!(obj.status.label(), "READY");
+        }
+    }
+
+    #[tokio::test]
+    async fn store_list_empty() {
+        let store = init_test_store().await;
+        let all = store.list(None).await.expect("list failed");
+        assert!(all.is_empty());
+    }
+
+    // ── List active ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn store_list_active_excludes_terminal() {
+        let store = init_test_store().await;
+        store.insert(&sample_objective("a", ObjectiveState::Primary(ObjectivePrimaryState::Discovered))).await.unwrap();
+        store.insert(&sample_objective("b", ObjectiveState::Primary(ObjectivePrimaryState::Ready))).await.unwrap();
+        store.insert(&sample_objective("c", ObjectiveState::Terminal(ObjectiveTerminalState::Done))).await.unwrap();
+        store.insert(&sample_objective("d", ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned))).await.unwrap();
+
+        let active = store.list_active().await.expect("list_active failed");
+        assert_eq!(active.len(), 2);
+        for obj in &active {
+            assert!(!obj.status.is_terminal(), "list_active returned a terminal objective");
+        }
+    }
+
+    #[tokio::test]
+    async fn store_list_active_all_terminal() {
+        let store = init_test_store().await;
+        store.insert(&sample_objective("done-1", ObjectiveState::Terminal(ObjectiveTerminalState::Done))).await.unwrap();
+        store.insert(&sample_objective("abandoned-1", ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned))).await.unwrap();
+
+        let active = store.list_active().await.expect("list_active failed");
+        assert!(active.is_empty());
+    }
+
+    // ── Duplicate insert ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn store_insert_duplicate_fails() {
+        let store = init_test_store().await;
+        let obj = sample_objective("dup", ObjectiveState::Primary(ObjectivePrimaryState::Discovered));
+        store.insert(&obj).await.expect("first insert failed");
+        let result = store.insert(&obj).await;
+        assert!(result.is_err(), "duplicate insert should fail (PK constraint)");
+    }
+}

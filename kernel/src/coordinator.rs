@@ -11,7 +11,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::event_bus::{Actor, ActorKind, Event, EventBus, EventKind};
-use crate::execution_engine::{WorkerPool, WorkerStatus, WorkerResult, WorkerMetrics};
+use crate::execution_engine::{WorkerMetrics, WorkerPool, WorkerResult, WorkerStatus};
+use crate::objective::ObjectiveStore;
+use crate::scheduler::Scheduler;
+use crate::state_machine::{self, ObjectiveState, RetryPolicy};
 
 // ---------------------------------------------------------------------------
 // Coordinator — orchestrates scheduler dispatch → execution engine
@@ -28,6 +31,10 @@ pub struct Coordinator {
     dispatch_count: AtomicUsize,
     /// Optional event bus for publishing lifecycle events.
     event_bus: Option<Arc<EventBus>>,
+    /// Reference to the objective store for status transitions on worker completion.
+    objective_store: Option<Arc<ObjectiveStore>>,
+    /// Reference to the scheduler for freeing dispatch slots on worker completion.
+    scheduler: Option<Arc<tokio::sync::Mutex<Scheduler>>>,
 }
 
 /// Factory for creating a Coordinator.
@@ -38,6 +45,8 @@ impl Coordinator {
             worker_pool: WorkerPool::new(4), // Default max 4 concurrent workers
             dispatch_count: AtomicUsize::new(0),
             event_bus: None,
+            objective_store: None,
+            scheduler: None,
         }
     }
 
@@ -51,6 +60,18 @@ impl Coordinator {
     pub fn with_event_bus(mut self, bus: Arc<EventBus>) -> Self {
         self.worker_pool = self.worker_pool.with_event_bus(bus.clone());
         self.event_bus = Some(bus);
+        self
+    }
+
+    /// Attach an objective store reference for auto-transitioning on completion.
+    pub fn with_objective_store(mut self, store: Arc<ObjectiveStore>) -> Self {
+        self.objective_store = Some(store);
+        self
+    }
+
+    /// Attach a scheduler reference for freeing dispatch slots on completion.
+    pub fn with_scheduler(mut self, sched: Arc<tokio::sync::Mutex<Scheduler>>) -> Self {
+        self.scheduler = Some(sched);
         self
     }
 
@@ -92,6 +113,79 @@ impl Coordinator {
     /// Query total dispatches processed.
     pub fn dispatch_count(&self) -> usize {
         self.dispatch_count.load(Ordering::SeqCst)
+    }
+
+    /// Dispatch an objective and monitor its worker for completion.
+    ///
+    /// Spawns the worker via the execution engine and sets up a background
+    /// task that transitions the objective through the state machine on
+    /// completion: EXECUTING -> REVIEW -> INTEGRATION -> DONE.
+    /// On success, frees the scheduler slot via notify_worker_finished.
+    pub async fn dispatch_and_monitor(
+        &mut self,
+        objective_id: &str,
+    ) -> Option<String> {
+        if !self.worker_pool.can_accept() {
+            self.emit_pool_full(objective_id);
+            return None;
+        }
+
+        self.dispatch_count.fetch_add(1, Ordering::SeqCst);
+        let objective_id_owned = objective_id.to_string();
+
+        // Spawn the worker — Stage 1 stub completes immediately
+        let worker_id_out = objective_id_owned.clone();
+        let worker_id = self.worker_pool.spawn(&objective_id_owned, async move {
+            // Stage 1: placeholder worker — just completes immediately
+            // Stage 2: call out to Python worker via gRPC
+            WorkerResult {
+                objective_id: worker_id_out,
+                status: WorkerStatus::Completed,
+                metrics: WorkerMetrics::default(),
+            }
+        })?;
+
+        // Take the JoinHandle to monitor completion
+        let handle = self.worker_pool.take_handle(objective_id);
+        let store = self.objective_store.clone();
+        let sched = self.scheduler.clone();
+
+        if let Some(handle) = handle {
+            tokio::spawn(async move {
+                let _ = handle.await;
+
+                // Worker completed — advance through the state machine.
+                // Stage 1 uses the full primary path; a real review pipeline
+                // would interject here.
+                let id = &objective_id_owned;
+                let policy = RetryPolicy::default();
+
+                let transitions: &[(ObjectiveState, ObjectiveState)] = &[
+                    (ObjectiveState::from_label("EXECUTING"),
+                     ObjectiveState::from_label("REVIEW")),
+                    (ObjectiveState::from_label("REVIEW"),
+                     ObjectiveState::from_label("INTEGRATION")),
+                    (ObjectiveState::from_label("INTEGRATION"),
+                     ObjectiveState::Terminal(state_machine::ObjectiveTerminalState::Done)),
+                ];
+
+                for (current, target) in transitions {
+                    if state_machine::transition(*current, *target, &policy, 0).is_ok() {
+                        if let Some(ref store) = store {
+                            let _ = store.update_status(id, target, 0).await;
+                        }
+                    }
+                }
+
+                // Free the scheduler slot
+                if let Some(ref sched) = sched {
+                    let mut s = sched.lock().await;
+                    s.notify_worker_finished(id);
+                }
+            });
+        }
+
+        Some(worker_id)
     }
 
     fn emit_pool_full(&self, objective_id: &str) {
