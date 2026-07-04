@@ -122,3 +122,65 @@ class ResolvedDependenciesItem(BaseModel):
     dependencies: list[DependencyEdgeItem] = Field(
         default_factory=list, description="Files the target imports from."
     )
+
+
+# ── Plan / Decomposer ───────────────────────────────────────────────────────────
+
+
+class SuccessCriteriaItem(BaseModel):
+    """Verifiable success criterion matching ``SuccessCriteria`` in the planner."""
+
+    description: str = Field(..., min_length=1, description="Verifiable success criterion.")
+    verification_hint: str | None = Field(None, description="Optional hint for verification.")
+
+
+class RiskAnnotationItem(BaseModel):
+    """Identified risk matching ``RiskAnnotation`` in the planner."""
+
+    category: str = Field(..., description="Risk category.")
+    description: str = Field(..., description="Human-readable risk summary.")
+    level: str = Field(..., description="Severity level.")
+    affected_objective_ids: list[str] = Field(default_factory=list, description="Affected objective IDs.")
+
+
+class ObjectiveItem(BaseModel):
+    """Single objective within an execution plan."""
+
+    id: str = Field(..., description="Unique objective ID.")
+    title: str = Field(..., min_length=1, description="Objective title.")
+    description: str = Field("", description="Extended description.")
+    owning_domain: str = Field(..., description="Responsible domain.")
+    priority: str = Field("medium", description="Relative priority.")
+    dependencies: list[str] = Field(default_factory=list, description="Dependency objective IDs.")
+    success_criteria: list[SuccessCriteriaItem] = Field(default_factory=list)
+    risks: list[RiskAnnotationItem] = Field(default_factory=list)
+    status: str = Field("pending", description="Current lifecycle status.")
+
+
+class ExecutionPlanItem(BaseModel):
+    """Immutable execution plan produced by the Goal Decomposer."""
+
+    plan_id: str = Field(..., description="Unique plan identifier.")
+    version: int = Field(1, ge=1, description="Plan version.")
+    supersedes: str | None = Field(None, description="Superseded plan ID.")
+    objective_description: str = Field(..., description="Original business objective.")
+    rationale: str = Field("", description="Decomposition strategy rationale.")
+    objectives: list[ObjectiveItem] = Field(..., min_length=1, description="DAG of objectives.")
+    plan_level_risks: list[RiskAnnotationItem] = Field(default_factory=list)
+    created_at: str = Field(..., description="ISO-8601 timestamp.")
+    content_hash: str = Field("", description="SHA-256 content digest.")
+
+
+class DecomposeRequest(BaseModel):
+    """Request body for ``POST /api/v1/plan/decompose``."""
+
+    objective: str = Field(..., min_length=1, description="Business objective to decompose.")
+    context: dict | None = Field(None, description="Optional PIL-gathered context.")
+
+
+class DecomposeResponse(BaseModel):
+    """Response body for the decompose endpoint."""
+
+    success: bool = Field(..., description="Whether decomposition succeeded.")
+    data: ExecutionPlanItem | None = Field(None, description="The execution plan, if successful.")
+    error: str | None = Field(None, description="Error message, if decomposition failed.")

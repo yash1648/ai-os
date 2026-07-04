@@ -10,14 +10,22 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 
+from fastapi import APIRouter, HTTPException, Query, Request
+
 from intelligence.api.models import (
     AdrSearchResultItem,
     ConstitutionSectionItem,
+    DecomposeRequest,
+    DecomposeResponse,
     DependencyEdgeItem,
     DependencyGraphStatsItem,
+    ExecutionPlanItem,
+    ObjectiveItem,
     PilHealth,
     ResolvedDependenciesItem,
+    RiskAnnotationItem,
     SemanticSearchResultItem,
+    SuccessCriteriaItem,
     SymbolDefItem,
 )
 from intelligence.api.state import PilState
@@ -270,3 +278,77 @@ async def dependency_graph_endpoint(
             ],
         },
     }
+
+
+# ── plan / decompose ────────────────────────────────────────────────────────────
+
+
+@router.post("/plan/decompose")
+async def plan_decompose(body: DecomposeRequest) -> DecomposeResponse:
+    """Decompose a business objective into an execution plan.
+
+    Uses the GoalDecomposer (with a mock LLM client for now) to produce an
+    immutable ``ExecutionPlan`` proposal. The Kernel independently validates
+    this before admission.
+    """
+    try:
+        from planner.decomposer import GoalDecomposer
+        from planner.llm import MockLlmClient
+
+        llm = MockLlmClient()
+        decomposer = GoalDecomposer(llm_client=llm)
+        plan = decomposer.decompose(body.objective, context=body.context or {})
+    except ValueError as e:
+        return DecomposeResponse(success=False, error=str(e))
+    except Exception as e:
+        return DecomposeResponse(success=False, error=f"Unexpected error: {e}")
+
+    return DecomposeResponse(
+        success=True,
+        data=ExecutionPlanItem(
+            plan_id=plan.plan_id,
+            version=plan.version,
+            supersedes=plan.supersedes,
+            objective_description=plan.objective_description,
+            rationale=plan.rationale,
+            objectives=[
+                ObjectiveItem(
+                    id=o.id,
+                    title=o.title,
+                    description=o.description,
+                    owning_domain=o.owning_domain,
+                    priority=o.priority.value,
+                    dependencies=o.dependencies,
+                    success_criteria=[
+                        SuccessCriteriaItem(
+                            description=c.description,
+                            verification_hint=c.verification_hint,
+                        )
+                        for c in o.success_criteria
+                    ],
+                    risks=[
+                        RiskAnnotationItem(
+                            category=r.category,
+                            description=r.description,
+                            level=r.level.value,
+                            affected_objective_ids=r.affected_objective_ids,
+                        )
+                        for r in o.risks
+                    ],
+                    status=o.status.value,
+                )
+                for o in plan.objectives
+            ],
+            plan_level_risks=[
+                RiskAnnotationItem(
+                    category=r.category,
+                    description=r.description,
+                    level=r.level.value,
+                    affected_objective_ids=r.affected_objective_ids,
+                )
+                for r in plan.plan_level_risks
+            ],
+            created_at=plan.created_at,
+            content_hash=plan.content_hash,
+        ),
+    )
