@@ -1,0 +1,16 @@
+[project]
+name = "ai-os-intelligence"
+version = "0.1.0"
+description = "Project Intelligence Layer (PIL) — FastAPI sidecar for indexing, ADR reasoning, constitution validation, symbol graph queries, and semantic search"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.28.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
