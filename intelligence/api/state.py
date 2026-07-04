@@ -14,6 +14,8 @@ from typing import Optional
 
 from intelligence.adr_engine.engine import AdrEngine
 from intelligence.constitution_engine.engine import ConstitutionEngine
+from intelligence.dependency_graph.engine import DependencyGraph
+from intelligence.dependency_graph.models import DependencyGraphConfig
 from intelligence.indexer.indexer import Indexer
 from intelligence.indexer.models import IndexerConfig
 from intelligence.semantic_search.models import SearchConfig, SearchDocument
@@ -40,6 +42,7 @@ class PilState:
         self._adr: Optional[AdrEngine] = None
         self._constitution: Optional[ConstitutionEngine] = None
         self._symbol_graph: Optional[SymbolGraph] = None
+        self._dependency_graph: Optional[DependencyGraph] = None
         self._semantic_search: Optional[SemanticSearch] = None
         self._indexer: Optional[Indexer] = None
 
@@ -82,6 +85,15 @@ class PilState:
             self._symbol_graph = SymbolGraph(cfg)
             self._symbol_graph.index_files()
         return self._symbol_graph
+
+    @property
+    def dependency_graph(self) -> DependencyGraph:
+        """Lazily initialised dependency graph over the project tree."""
+        if self._dependency_graph is None:
+            cfg = DependencyGraphConfig(root_dir=self._root)
+            self._dependency_graph = DependencyGraph(cfg)
+            self._dependency_graph.index_files()
+        return self._dependency_graph
 
     @property
     def indexer(self) -> Indexer:
@@ -189,6 +201,9 @@ class PilState:
 
         self._indexer = None
         counts["indexed_files"] = self.indexer.count()
+
+        self._dependency_graph = None
+        counts["dep_edges"] = self.dependency_graph.stats().edge_count
 
         self._semantic_search = None
         counts["search_docs"] = self.semantic_search.count()

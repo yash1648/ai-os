@@ -89,3 +89,36 @@ class SemanticSearchResultItem(BaseModel):
     content: str = Field(..., description="Matched text content.")
     file_path: str = Field(..., description="Filesystem path.")
     score: float = Field(..., ge=0.0, le=1.0, description="Similarity in [0, 1].")
+
+
+# ── Dependency graph ────────────────────────────────────────────────────────────
+
+
+class DependencyEdgeItem(BaseModel):
+    """Single dependency edge matching ``DependencyEdge`` in the kernel client."""
+
+    source_file: str = Field(..., description="Absolute path of the importing file.")
+    source_line: int = Field(..., ge=1, description="Line number of the import.")
+    target: str = Field(..., description="Imported module or symbol name.")
+    kind: str = Field(..., description="Import kind (import, from-import, use, …).")
+
+
+class DependencyGraphStatsItem(BaseModel):
+    """Aggregate graph statistics matching ``DependencyGraphStats``."""
+
+    node_count: int = Field(..., ge=0, description="Unique file nodes.")
+    edge_count: int = Field(..., ge=0, description="Total dependency edges.")
+    languages: list[str] = Field(
+        default_factory=list, description="Languages present in the graph."
+    )
+
+
+class ResolvedDependenciesItem(BaseModel):
+    """Incoming and outgoing edges for a symbol or file query."""
+
+    dependents: list[DependencyEdgeItem] = Field(
+        default_factory=list, description="Files that import the target."
+    )
+    dependencies: list[DependencyEdgeItem] = Field(
+        default_factory=list, description="Files the target imports from."
+    )
