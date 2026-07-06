@@ -771,7 +771,7 @@ mod api_objective_lifecycle {
         let (state, _) = test_app_state().await;
         let app = api::router(state);
 
-        let req = Request::delete("/api/v1/objectivities/missing-id")
+        let req = Request::delete("/api/v1/objectives/missing-id")
             .body(Body::empty())
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
