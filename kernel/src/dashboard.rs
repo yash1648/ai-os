@@ -448,6 +448,49 @@ pub async fn audit_log_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Governance API stubs
+// ---------------------------------------------------------------------------
+
+/// A pending approval request for the governance workflow.
+#[derive(Serialize)]
+pub struct ApprovalRequestItem {
+    pub request_id: String,
+    pub objective_id: String,
+    pub requested_by: String,
+    pub required_role: String,
+    pub status: String,
+    pub created_at: String,
+}
+
+/// `GET /api/v1/admin/approval-queue` — returns all pending approval requests.
+///
+/// Currently returns an empty list (stub). Real implementation will query an
+/// in-memory or persisted approval store.
+pub async fn approval_queue_handler(
+    State(_state): State<Arc<AppState>>,
+) -> impl axum::response::IntoResponse {
+    let items: Vec<ApprovalRequestItem> = vec![];
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"success": true, "data": items})),
+    )
+}
+
+/// `GET /api/v1/admin/compliance/export` — exports compliance records as JSON.
+///
+/// Currently returns an empty list (stub). Real implementation will aggregate
+/// records from the objective store and plugin evaluations.
+pub async fn compliance_export_handler(
+    State(_state): State<Arc<AppState>>,
+) -> impl axum::response::IntoResponse {
+    let records: Vec<serde_json::Value> = vec![];
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"success": true, "data": records})),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

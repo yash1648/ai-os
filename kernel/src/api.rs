@@ -31,6 +31,7 @@ use crate::objective::{Objective, ObjectiveStore};
 use crate::scheduler::Scheduler;
 use crate::dashboard;
 use crate::state_machine::{self, ObjectivePrimaryState, ObjectiveState, RetryPolicy};
+use tower_http::services::fs::ServeDir;
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -194,12 +195,25 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/dashboard/objectives", get(dashboard::objectives_handler))
         .route("/api/dashboard/metrics", get(dashboard::metrics_handler))
         .route("/api/dashboard/audit-log", get(dashboard::audit_log_handler))
+        // Admin — governance (approval queue, compliance export)
+        .route(
+            "/api/v1/admin/approval-queue",
+            get(dashboard::approval_queue_handler),
+        )
+        .route(
+            "/api/v1/admin/compliance/export",
+            get(dashboard::compliance_export_handler),
+        )
         // Prometheus metrics
         .route("/metrics", get(metrics_handler))
         // Instrument all requests
         .layer(middleware::from_fn(metrics_middleware))
         .with_state(state)
-}
+        // Serve dashboard/ directory as static files at root (/)
+        .fallback_service(
+            ServeDir::new("../dashboard").append_index_html_on_directories(true),
+        )
+    }
 
 // ---------------------------------------------------------------------------
 // Middleware: Prometheus metrics
