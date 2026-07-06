@@ -6,15 +6,18 @@
 
 use ai_os_kernel::api::AppState;
 use ai_os_kernel::config::KernelConfig;
+use ai_os_kernel::dashboard;
 use ai_os_kernel::config::SchedulerConfig;
 use ai_os_kernel::coordinator::Coordinator;
 use ai_os_kernel::diff_applier::{DiffApplier, StructuredDiff};
+use ai_os_kernel::execution_engine::WorkerConfig;
 use ai_os_kernel::event_bus::EventBus;
 use ai_os_kernel::logging;
 use ai_os_kernel::objective::ObjectiveStore;
 use ai_os_kernel::scheduler::Scheduler;
 use ai_os_kernel::state_machine;
 use clap::{Parser, Subcommand};
+use metrics_exporter_prometheus::PrometheusBuilder;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -117,16 +120,26 @@ async fn main() {
                 .connect(&database_url)
                 .await
                 .expect("Failed to connect to database");
-            let objective_store = ObjectiveStore::new(pool)
+            let objective_store = ObjectiveStore::new(pool.clone())
                 .await
                 .expect("Failed to initialize objective store");
             let objective_store_arc = Arc::new(objective_store);
             let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
 
+            let worker_config = WorkerConfig {
+                simulation_delay_ms: config.execution.simulation_delay_ms,
+                fail_objective_ids: config.execution.fail_objective_ids.clone(),
+            };
+
             let coordinator = Coordinator::new()
                 .with_event_bus(Arc::new(event_bus.clone()))
                 .with_objective_store(objective_store_arc.clone())
-                .with_scheduler(scheduler_arc.clone());
+                .with_scheduler(scheduler_arc.clone())
+                .with_worker_config(worker_config);
+
+let metrics_handle = PrometheusBuilder::new()
+                .install_recorder()
+                .expect("Failed to install Prometheus recorder");
 
             let state = Arc::new(AppState {
                 config: config.clone(),
@@ -135,6 +148,18 @@ async fn main() {
                 event_bus: event_bus.clone(),
                 objective_store: objective_store_arc,
                 started_at: chrono::Utc::now(),
+                pool: pool.clone(),
+                metrics_handle,
+            });
+
+            // Initialize audit table and spawn background consumer task.
+            dashboard::init_audit_table(&pool)
+                .await
+                .expect("Failed to init audit table");
+            let audit_bus = event_bus.clone();
+            let audit_pool = pool.clone();
+            tokio::spawn(async move {
+                dashboard::audit_consumer_task(audit_bus, audit_pool).await;
             });
 
             let app = ai_os_kernel::api::router(state);

@@ -15,9 +15,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx::{FromRow, SqlitePool};
 
 use crate::api::AppState;
-use crate::event_bus::Event;
+use crate::event_bus::{Event, EventBus};
 
 // ---------------------------------------------------------------------------
 // Query parameters
@@ -36,6 +37,17 @@ pub struct AuditLogQuery {
 /// A single hash-chained audit entry.
 #[derive(Serialize)]
 pub struct AuditEntry {
+    pub event_id: String,
+    pub hash: String,
+    pub prev_hash: String,
+    pub timestamp: String,
+    pub kind: String,
+    pub objective_id: Option<String>,
+}
+
+/// Row struct for reading persisted audit entries from SQLite.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ReadAuditEntry {
     pub event_id: String,
     pub hash: String,
     pub prev_hash: String,
@@ -121,6 +133,84 @@ fn build_audit_chain(events: &[Event]) -> Vec<AuditEntry> {
     }
 
     chain
+}
+
+// ---------------------------------------------------------------------------
+// Persisted audit store
+// ---------------------------------------------------------------------------
+
+/// Create the `audit_entries` table if it does not exist. Idempotent.
+pub async fn init_audit_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS audit_entries (
+            event_id        TEXT PRIMARY KEY,
+            hash            TEXT NOT NULL,
+            prev_hash       TEXT NOT NULL,
+            timestamp       TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            objective_id    TEXT
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Background task that subscribes to `EventBus` and persists hash-chained
+/// `AuditEntry` records to the SQLite `audit_entries` table.
+///
+/// Runs forever (loops on `rx.recv()`). Gracefully handles `Lagged` and
+/// `Closed` broadcast errors without panicking.
+pub async fn audit_consumer_task(event_bus: EventBus, pool: SqlitePool) {
+    if let Err(e) = init_audit_table(&pool).await {
+        tracing::error!(err = %e, "Failed to init audit table in consumer");
+        return;
+    }
+
+    let mut rx = event_bus.subscribe();
+    let mut prev_hash = GENESIS_HASH.to_string();
+
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                let kind_str = format!("{:?}", event.kind);
+                let ts = event.timestamp.to_rfc3339();
+                let event_id = event.event_id.to_string();
+                let hash = compute_entry_hash(&prev_hash, &event_id, &kind_str, &ts);
+
+                let result = sqlx::query(
+                    "INSERT OR IGNORE INTO audit_entries (event_id, hash, prev_hash, timestamp, kind, objective_id) VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(&event_id)
+                .bind(&hash)
+                .bind(&prev_hash)
+                .bind(&ts)
+                .bind(&kind_str)
+                .bind(&event.objective_id)
+                .execute(&pool)
+                .await;
+
+                match result {
+                    Ok(_) => {
+                        prev_hash = hash;
+                        tracing::info!(event_id = %event_id, kind = %kind_str, "Audit entry persisted");
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, event_id = %event_id, "Failed to persist audit entry");
+                    }
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!(count = n, "Audit consumer lagged behind by {n} events");
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                tracing::info!("Audit consumer: event bus closed, exiting");
+                break;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -272,25 +362,71 @@ pub async fn metrics_handler(
 
 /// `GET /api/dashboard/audit-log` — hash-chained audit entries, optionally
 /// filtered by `since` (ISO 8601) timestamp.
+///
+/// Returns entries from the persisted `audit_entries` table when available,
+/// falling back to dynamic hash-chain construction from the event store
+/// replay when the table is empty (e.g., before the audit consumer starts).
 pub async fn audit_log_handler(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AuditLogQuery>,
 ) -> impl axum::response::IntoResponse {
     let limit = params.limit.unwrap_or(100).min(1000);
 
+    // Validate `since` parameter before any DB or event-bus operation.
+    if let Some(since_str) = &params.since {
+        if chrono::DateTime::parse_from_rfc3339(since_str).is_err() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": format!("Invalid ISO 8601 timestamp: '{since_str}'"),
+                })),
+            );
+        }
+    }
+
+    // Try persisted audit_entries table first.
+    let rows: Vec<ReadAuditEntry> = if let Some(since_str) = &params.since {
+        sqlx::query_as(
+            "SELECT event_id, hash, prev_hash, timestamp, kind, objective_id \
+             FROM audit_entries WHERE timestamp >= ? ORDER BY timestamp ASC LIMIT ?",
+        )
+        .bind(since_str)
+        .bind(limit)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query_as(
+            "SELECT event_id, hash, prev_hash, timestamp, kind, objective_id \
+             FROM audit_entries ORDER BY timestamp ASC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    };
+
+    if !rows.is_empty() {
+        let chain: Vec<AuditEntry> = rows
+            .into_iter()
+            .map(|r| AuditEntry {
+                event_id: r.event_id,
+                hash: r.hash,
+                prev_hash: r.prev_hash,
+                timestamp: r.timestamp,
+                kind: r.kind,
+                objective_id: r.objective_id,
+            })
+            .collect();
+        return (StatusCode::OK, Json(serde_json::json!({"success": true, "data": chain})));
+    }
+
+    // Fall back to dynamic chain building from event store.
     let events = if let Some(since_str) = &params.since {
-        let since = match chrono::DateTime::parse_from_rfc3339(since_str) {
-            Ok(dt) => dt.with_timezone(&chrono::Utc),
-            Err(_) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "success": false,
-                        "error": format!("Invalid ISO 8601 timestamp: '{since_str}'"),
-                    })),
-                );
-            }
-        };
+        let since = chrono::DateTime::parse_from_rfc3339(since_str)
+            .unwrap() // safe: validated above
+            .with_timezone(&chrono::Utc);
         let now = chrono::Utc::now();
         match state.event_bus.replay_range(&since, &now, limit).await {
             Ok(ev) => ev,
@@ -431,5 +567,151 @@ mod tests {
         assert_eq!(metrics.failed_objectives, 0);
         assert_eq!(metrics.abandoned_objectives, 0);
         assert!((metrics.avg_retry_count - 1.0).abs() < f64::EPSILON);
+    }
+
+    // -----------------------------------------------------------------------
+    // Audit table and consumer tests (require SQLite)
+    // -----------------------------------------------------------------------
+
+    /// Create a fresh in-memory SQLite pool for testing.
+    async fn test_pool() -> SqlitePool {
+        SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory SQLite pool")
+    }
+
+    #[tokio::test]
+    async fn test_init_audit_table_creates_table() {
+        let pool = test_pool().await;
+        init_audit_table(&pool).await.expect("init_audit_table failed");
+
+        // Verify table exists by querying it.
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM audit_entries")
+            .fetch_one(&pool)
+            .await
+            .expect("audit_entries table should exist");
+        assert_eq!(count.0, 0, "New table should be empty");
+    }
+
+    #[tokio::test]
+    async fn test_audit_consumer_persists_event() {
+        let pool = test_pool().await;
+        init_audit_table(&pool).await.expect("init_audit_table failed");
+
+        let event_bus = EventBus::new().with_persistence(pool.clone());
+
+        // Spawn the consumer in the background.
+        let consumer_bus = event_bus.clone();
+        let consumer_pool = pool.clone();
+        tokio::spawn(async move {
+            audit_consumer_task(consumer_bus, consumer_pool).await;
+        });
+
+        // Give the consumer time to subscribe.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Publish an event.
+        let event = Event::new(
+            crate::event_bus::EventKind::ObjectiveCreated,
+            crate::event_bus::Actor {
+                kind: crate::event_bus::ActorKind::Kernel,
+                id: "test".into(),
+            },
+            serde_json::json!({"msg": "audit test"}),
+        )
+        .with_objective("obj-audit-1");
+        event_bus.publish(event);
+
+        // Allow consumer to process.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Verify the audit entry was persisted.
+        let rows: Vec<ReadAuditEntry> = sqlx::query_as(
+            "SELECT event_id, hash, prev_hash, timestamp, kind, objective_id \
+             FROM audit_entries ORDER BY timestamp ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to read audit_entries");
+
+        assert_eq!(rows.len(), 1, "Expected 1 audit entry");
+        assert_eq!(rows[0].prev_hash, GENESIS_HASH, "First entry should have genesis prev_hash");
+        assert_eq!(rows[0].kind, "ObjectiveCreated");
+        assert_eq!(rows[0].objective_id.as_deref(), Some("obj-audit-1"));
+        assert_eq!(rows[0].hash.len(), 64, "Hash should be 64 hex chars");
+    }
+
+    #[tokio::test]
+    async fn test_audit_consumer_hash_chain() {
+        let pool = test_pool().await;
+        init_audit_table(&pool).await.expect("init_audit_table failed");
+
+        let event_bus = EventBus::new().with_persistence(pool.clone());
+
+        // Spawn the consumer.
+        let consumer_bus = event_bus.clone();
+        let consumer_pool = pool.clone();
+        tokio::spawn(async move {
+            audit_consumer_task(consumer_bus, consumer_pool).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Publish two events.
+        let event1 = Event::new(
+            crate::event_bus::EventKind::ObjectiveCreated,
+            crate::event_bus::Actor {
+                kind: crate::event_bus::ActorKind::Kernel,
+                id: "test".into(),
+            },
+            serde_json::json!({"msg": "first"}),
+        )
+        .with_objective("obj-chain-1");
+        event_bus.publish(event1);
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let event2 = Event::new(
+            crate::event_bus::EventKind::PlanGenerated,
+            crate::event_bus::Actor {
+                kind: crate::event_bus::ActorKind::Worker,
+                id: "w-1".into(),
+            },
+            serde_json::json!({"msg": "second"}),
+        )
+        .with_objective("obj-chain-1");
+        event_bus.publish(event2);
+
+        // Allow consumer to process both.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Read persisted entries in order.
+        let rows: Vec<ReadAuditEntry> = sqlx::query_as(
+            "SELECT event_id, hash, prev_hash, timestamp, kind, objective_id \
+             FROM audit_entries ORDER BY timestamp ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("Failed to read audit_entries");
+
+        assert_eq!(rows.len(), 2, "Expected 2 audit entries");
+
+        // First entry: prev_hash must be genesis.
+        assert_eq!(rows[0].prev_hash, GENESIS_HASH);
+        // Second entry: prev_hash must equal first entry's hash.
+        assert_eq!(rows[1].prev_hash, rows[0].hash);
+
+        // Both hashes must be 64 hex chars.
+        for row in &rows {
+            assert_eq!(row.hash.len(), 64);
+            assert_eq!(row.prev_hash.len(), 64);
+        }
+
+        // Verify hashes are independently computable.
+        let computed_hash_0 = compute_entry_hash(GENESIS_HASH, &rows[0].event_id, &rows[0].kind, &rows[0].timestamp);
+        assert_eq!(computed_hash_0, rows[0].hash, "First entry hash should be independently verifiable");
+
+        let computed_hash_1 = compute_entry_hash(&rows[0].hash, &rows[1].event_id, &rows[1].kind, &rows[1].timestamp);
+        assert_eq!(computed_hash_1, rows[1].hash, "Second entry hash should be independently verifiable");
     }
 }

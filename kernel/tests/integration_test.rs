@@ -640,6 +640,10 @@ mod api_objective_lifecycle {
             event_bus,
             config,
             started_at: chrono::Utc::now(),
+            pool: pool.clone(),
+            metrics_handle: metrics_exporter_prometheus::PrometheusBuilder::new()
+                .build_recorder()
+                .handle(),
         });
 
         (state, store)
@@ -986,5 +990,66 @@ mod api_objective_lifecycle {
         assert_eq!(final_label, "DONE", "Objective should have completed the full lifecycle");
         let obj = store.get(&obj_id).await.unwrap().unwrap();
         assert_eq!(obj.status.label(), "DONE");
+    }
+
+    #[tokio::test]
+    async fn e2e_worker_failure_goes_to_abandoned() {
+        let (state, store) = test_app_state().await;
+        let app = api::router(state.clone());
+
+        let create_body = serde_json::json!({
+            "title": "E2E failure test",
+            "description": "Tests the worker failure → abandoned path",
+            "owner": "sisyphus",
+            "priority": "high",
+            "dependencies": [],
+            "success_criteria": ["it fails"],
+            "tags": ["e2e", "failure"]
+        });
+
+        let req = Request::post("/api/v1/objectives")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&create_body).unwrap()))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        let json: Value = body_json(res.into_body()).await;
+        assert!(json["success"].as_bool().unwrap());
+        let obj_id = json["data"]["id"].as_str().unwrap().to_string();
+
+        {
+            let mut coord = state.coordinator.lock().await;
+            coord.set_fail_objectives(vec![obj_id.clone()]);
+        }
+
+        let req = Request::post(format!("/api/v1/objectives/{obj_id}/ready"))
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let req = Request::post("/api/v1/scheduler/dispatch")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut final_label;
+        loop {
+            let obj = store.get(&obj_id).await.unwrap().unwrap();
+            final_label = obj.status.label().to_string();
+            if final_label == "ABANDONED" {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!(
+                    "Timed out waiting for objective to reach ABANDONED. Last status: {final_label}"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        assert_eq!(final_label, "ABANDONED");
     }
 }

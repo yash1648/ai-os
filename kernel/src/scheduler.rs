@@ -8,6 +8,7 @@
 // Stage 2+: lock management, per-domain concurrency, event-driven dispatch.
 
 use chrono::{DateTime, Utc};
+use metrics::{counter, gauge, describe_counter, describe_gauge};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -151,7 +152,9 @@ impl Scheduler {
 
     /// Number of entries waiting in the ready queue.
     pub fn queue_len(&self) -> usize {
-        self.ready_queue.len()
+        let len = self.ready_queue.len();
+        gauge!("ai_os_scheduler_queue_len").set(len as f64);
+        len
     }
 
     /// Number of objectives currently executing.
@@ -228,6 +231,8 @@ impl Scheduler {
     pub fn try_dispatch(&mut self) -> Option<String> {
         if !self.can_dispatch() {
             self.throttle_count += 1;
+            describe_counter!("ai_os_scheduler_throttle_count", "Number of times dispatch was throttled due to concurrency limits");
+            counter!("ai_os_scheduler_throttle_count").increment(1);
             self.emit_event(
                 EventKind::SchedulingThrottled,
                 serde_json::json!({
@@ -244,6 +249,10 @@ impl Scheduler {
 
         self.active_count += 1;
         self.total_dispatched += 1;
+
+        describe_counter!("ai_os_scheduler_dispatch_count", "Total number of objectives dispatched");
+        describe_gauge!("ai_os_scheduler_queue_len", "Current number of objectives waiting in the ready queue");
+        counter!("ai_os_scheduler_dispatch_count").increment(1);
 
         self.emit_event(
             EventKind::DispatchDecision,

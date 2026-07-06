@@ -23,6 +23,9 @@
 //! [scheduler]
 //! max_concurrent_objectives = 4
 //! max_retries = 3
+//!
+//! [execution]
+//! simulation_delay_ms = 0
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -306,6 +309,30 @@ fn default_pil_timeout() -> u64 {
     30
 }
 
+/// Worker execution configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionConfig {
+    /// How long (ms) the simulated worker sleeps before returning.
+    #[serde(default = "default_simulation_delay")]
+    pub simulation_delay_ms: u64,
+    /// Objective IDs that should simulate failure.
+    #[serde(default)]
+    pub fail_objective_ids: Vec<String>,
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
+            simulation_delay_ms: default_simulation_delay(),
+            fail_objective_ids: vec![],
+        }
+    }
+}
+
+fn default_simulation_delay() -> u64 {
+    0
+}
+
 // ---------------------------------------------------------------------------
 // Top-level KernelConfig
 // ---------------------------------------------------------------------------
@@ -326,6 +353,8 @@ pub struct KernelConfig {
     pub event_bus: EventBusConfig,
     #[serde(default)]
     pub ownership: OwnershipConfig,
+    #[serde(default)]
+    pub execution: ExecutionConfig,
     /// Workspace root directory for all file operations.
     #[serde(default = "default_workspace_root")]
     pub workspace_root: String,
@@ -343,6 +372,7 @@ impl Default for KernelConfig {
             scheduler: SchedulerConfig::default(),
             event_bus: EventBusConfig::default(),
             ownership: OwnershipConfig::default(),
+            execution: ExecutionConfig::default(),
             workspace_root: default_workspace_root(),
             config_path: None,
         }
@@ -397,6 +427,7 @@ impl KernelConfig {
     /// - `AI_OS_MAX_CONCURRENT`, `AI_OS_MAX_RETRIES`
     /// - `AI_OS_EVENT_BUS_CAPACITY`
     /// - `AI_OS_OWNERSHIP_CONFIG`, `AI_OS_ENFORCE_OWNERSHIP`
+    /// - `AI_OS_EXECUTION_SIMULATION_DELAY_MS`
     fn apply_env_overrides(&mut self) -> Result<(), ConfigError> {
         if let Some(val) = std::env::var("AI_OS_DATABASE_URL").ok().filter(|v| !v.is_empty()) {
             self.database.url = val;
@@ -445,6 +476,14 @@ impl KernelConfig {
         if let Some(val) = std::env::var("AI_OS_ENFORCE_OWNERSHIP").ok().filter(|v| !v.is_empty()) {
             self.ownership.enforce = val.parse::<bool>().map_err(|e| {
                 ConfigError::EnvParse(format!("AI_OS_ENFORCE_OWNERSHIP: {e}"))
+            })?;
+        }
+        if let Some(val) = std::env::var("AI_OS_EXECUTION_SIMULATION_DELAY_MS")
+            .ok()
+            .filter(|v| !v.is_empty())
+        {
+            self.execution.simulation_delay_ms = val.parse::<u64>().map_err(|e| {
+                ConfigError::EnvParse(format!("AI_OS_EXECUTION_SIMULATION_DELAY_MS: {e}"))
             })?;
         }
         Ok(())
@@ -533,6 +572,9 @@ capacity = 2048
 [ownership]
 config_path = "./ownership.yaml"
 enforce = true
+
+[execution]
+simulation_delay_ms = 500
 "#
     }
 
@@ -554,6 +596,8 @@ enforce = true
         );
         assert!(config.ownership.enforce);
         assert_eq!(config.workspace_root, "/tmp/test-workspace");
+        assert_eq!(config.execution.simulation_delay_ms, 500);
+        assert!(config.execution.fail_objective_ids.is_empty());
     }
 
     #[test]

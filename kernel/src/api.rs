@@ -4,17 +4,22 @@
 //! state machine) over HTTP for the CLI, dashboard, and Python workers.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
+    middleware::{self, Next},
     response::sse::{Event, Sse},
-    response::Json,
     response::IntoResponse,
+    response::Json,
+    response::Response,
     routing::{delete, get, post},
     Router,
 };
+use metrics::{counter, histogram, describe_counter, describe_histogram};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -37,8 +42,10 @@ pub struct AppState {
     pub scheduler: Arc<tokio::sync::Mutex<Scheduler>>,
     pub coordinator: tokio::sync::Mutex<Coordinator>,
     pub event_bus: EventBus,
-    pub objective_store: Arc<ObjectiveStore>,
+pub objective_store: Arc<ObjectiveStore>,
     pub started_at: chrono::DateTime<chrono::Utc>,
+    pub metrics_handle: metrics_exporter_prometheus::PrometheusHandle,
+    pub pool: SqlitePool,
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +194,35 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/dashboard/objectives", get(dashboard::objectives_handler))
         .route("/api/dashboard/metrics", get(dashboard::metrics_handler))
         .route("/api/dashboard/audit-log", get(dashboard::audit_log_handler))
+        // Prometheus metrics
+        .route("/metrics", get(metrics_handler))
+        // Instrument all requests
+        .layer(middleware::from_fn(metrics_middleware))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Middleware: Prometheus metrics
+// ---------------------------------------------------------------------------
+
+async fn metrics_middleware(
+    request: Request,
+    next: Next,
+) -> Response {
+    let start = Instant::now();
+    let path = request.uri().path().to_string();
+    let response = next.run(request).await;
+    counter!("ai_os_api_request_count", "route" => path.clone()).increment(1);
+    histogram!("ai_os_api_request_duration_seconds", "route" => path.clone()).record(start.elapsed().as_secs_f64());
+    response
+}
+
+// ---------------------------------------------------------------------------
+// Handler: Metrics
+// ---------------------------------------------------------------------------
+
+async fn metrics_handler() -> String {
+    "metrics not available".to_string()
 }
 
 // ---------------------------------------------------------------------------

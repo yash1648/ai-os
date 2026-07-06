@@ -12,6 +12,71 @@ use uuid::Uuid;
 
 use crate::event_bus::{Actor, ActorKind, Event, EventBus, EventKind};
 
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Worker configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for worker execution behaviour.
+///
+/// Stage 1 uses simulated workers with configurable delay.
+/// Stage 2+ will route to gRPC Python workers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerConfig {
+    /// How long (in ms) the worker simulates work before returning.
+    /// Set to 0 for instantaneous completion (useful in tests).
+    pub simulation_delay_ms: u64,
+
+    /// Optional list of objective IDs that should simulate failure.
+    /// Workers for objectives NOT in this list will complete successfully.
+    pub fail_objective_ids: Vec<String>,
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            simulation_delay_ms: 0,
+            fail_objective_ids: vec![],
+        }
+    }
+}
+
+/// Run a simulated worker task.
+///
+/// Sleeps for `config.simulation_delay_ms`, then returns a `WorkerResult`
+/// with the configured status (Completed or Failed), the actual duration,
+/// and starter metrics.
+pub async fn run_simulated_worker(
+    objective_id: &str,
+    config: &WorkerConfig,
+) -> WorkerResult {
+    let start = std::time::Instant::now();
+
+    if config.simulation_delay_ms > 0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(config.simulation_delay_ms)).await;
+    }
+
+    let elapsed = start.elapsed().as_millis() as u64;
+
+    let failed = config.fail_objective_ids.iter().any(|id| id == objective_id);
+    let status = if failed {
+        WorkerStatus::Failed("Simulated failure per WorkerConfig".into())
+    } else {
+        WorkerStatus::Completed
+    };
+
+    WorkerResult {
+        objective_id: objective_id.to_string(),
+        status,
+        metrics: WorkerMetrics {
+            duration_ms: elapsed,
+            tokens_used: None,
+            files_changed: 0,
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -39,7 +104,7 @@ pub struct WorkerHandle {
     pub objective_id: String,
     pub worker_id: String,
     pub status: WorkerStatus,
-    pub(crate) handle: JoinHandle<()>,
+    pub(crate) handle: JoinHandle<WorkerResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,12 +179,9 @@ impl WorkerPool {
             Uuid::new_v4().to_string().split_at(8).0
         );
 
-        let _obj_id = objective_id.to_string();
         let wid = worker_id.clone();
 
-        let handle = tokio::spawn(async move {
-            let _result = worker_fn.await;
-        });
+        let handle = tokio::spawn(worker_fn);
 
         self.active.insert(
             objective_id.to_string(),
@@ -139,7 +201,7 @@ impl WorkerPool {
     /// Remove and return the JoinHandle for a running worker by objective_id.
     /// The caller takes ownership of the handle and must await it to collect
     /// the worker's completion.
-    pub fn take_handle(&mut self, objective_id: &str) -> Option<JoinHandle<()>> {
+    pub fn take_handle(&mut self, objective_id: &str) -> Option<JoinHandle<WorkerResult>> {
         self.active.remove(objective_id).map(|h| h.handle)
     }
 

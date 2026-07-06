@@ -1,3 +1,4 @@
+use metrics::{counter, describe_counter};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -266,6 +267,8 @@ pub fn transition(
     };
 
     if allowed {
+        describe_counter!("ai_os_state_transition_count", "Total number of allowed state transitions");
+        counter!("ai_os_state_transition_count", "from" => current.label(), "to" => target.label()).increment(1);
         Ok(target)
     } else {
         Err(TransitionError::IllegalTransition {
