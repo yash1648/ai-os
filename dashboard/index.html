@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI-OS Kernel Dashboard</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+<script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/client-side-templates.js"></script>
+<script src="https://unpkg.com/mustache@4"></script>
+<script src="/app.js"></script>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- ================================================================
+       Sidebar
+       ================================================================ -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>AI-OS Kernel</h1>
+      <div class="subtitle">Dashboard</div>
+    </div>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-tab="overview">
+        <span class="nav-icon">O</span>
+        Overview
+      </button>
+      <button class="nav-item" data-tab="timeline">
+        <span class="nav-icon">T</span>
+        Timeline
+      </button>
+      <button class="nav-item" data-tab="objectives">
+        <span class="nav-icon">O</span>
+        Objectives
+      </button>
+      <button class="nav-item" data-tab="audit">
+        <span class="nav-icon">A</span>
+        Audit Log
+      </button>
+      <button class="nav-item" data-tab="metrics">
+        <span class="nav-icon">M</span>
+        Metrics
+      </button>
+    </nav>
+  </aside>
+
+  <!-- ================================================================
+       Main Content
+       ================================================================ -->
+  <main class="main-content">
+
+    <!-- ================================================================
+         Overview Tab
+         ================================================================ -->
+    <section id="overview-tab" class="tab-panel active">
+      <h2>Overview</h2>
+
+      <!-- Metrics cards -->
+      <div id="overview-metrics"
+           hx-get="/api/dashboard/metrics"
+           hx-trigger="load, refresh from:#overview-content"
+           hx-ext="client-side-templates"
+           mustache-template="overview-metrics-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+
+      <!-- Scheduler status -->
+      <div id="overview-scheduler"
+           hx-get="/api/v1/scheduler/status"
+           hx-trigger="load, refresh from:#overview-content"
+           hx-ext="client-side-templates"
+           mustache-template="overview-scheduler-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML"
+           style="margin-top: 12px;">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+
+      <!-- Recent events -->
+      <div id="overview-events"
+           hx-get="/api/dashboard/timeline?limit=10"
+           hx-trigger="load, refresh from:#overview-content"
+           hx-ext="client-side-templates"
+           mustache-template="overview-events-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML"
+           style="margin-top: 24px;">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+    </section>
+
+    <!-- ================================================================
+         Timeline Tab
+         ================================================================ -->
+    <section id="timeline-tab" class="tab-panel">
+      <h2>Timeline</h2>
+
+      <div class="filter-bar">
+        <input type="number" id="timeline-limit" value="50" min="1" max="500" placeholder="Limit">
+        <button class="nav-item"
+                style="width:auto;padding:6px 16px;"
+                hx-get="/api/dashboard/timeline?limit=50"
+                hx-ext="client-side-templates"
+                mustache-template="timeline-events-tmpl"
+                hx-target="#timeline-content"
+                hx-trigger="click"
+                hx-include="#timeline-limit"
+                hx-swap="innerHTML"
+                hx-params="limit">
+          Refresh
+        </button>
+      </div>
+
+      <div id="timeline-content"
+           hx-get="/api/dashboard/timeline?limit=50"
+           hx-trigger="load"
+           hx-ext="client-side-templates"
+           mustache-template="timeline-events-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+    </section>
+
+    <!-- ================================================================
+         Objectives Tab
+         ================================================================ -->
+    <section id="objectives-tab" class="tab-panel">
+      <h2>Objectives</h2>
+
+      <div class="filter-bar">
+        <input type="text" id="obj-filter" placeholder="Filter by title or ID..." oninput="filterObjectives()">
+      </div>
+
+      <div id="objectives-content"
+           hx-get="/api/v1/objectives"
+           hx-trigger="load"
+           hx-ext="client-side-templates"
+           mustache-template="objectives-table-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+    </section>
+
+    <!-- ================================================================
+         Audit Log Tab
+         ================================================================ -->
+    <section id="audit-tab" class="tab-panel">
+      <h2>Audit Log</h2>
+
+      <div class="filter-bar">
+        <input type="number" id="audit-limit" value="20" min="1" max="200" placeholder="Limit">
+        <button class="nav-item"
+                style="width:auto;padding:6px 16px;"
+                hx-get="/api/dashboard/audit-log?limit=20"
+                hx-ext="client-side-templates"
+                mustache-template="audit-table-tmpl"
+                hx-target="#audit-content"
+                hx-trigger="click"
+                hx-include="#audit-limit"
+                hx-swap="innerHTML"
+                hx-params="limit">
+          Refresh
+        </button>
+      </div>
+
+      <div id="audit-content"
+           hx-get="/api/dashboard/audit-log?limit=20"
+           hx-trigger="load"
+           hx-ext="client-side-templates"
+           mustache-template="audit-table-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+    </section>
+
+    <!-- ================================================================
+         Metrics Tab
+         ================================================================ -->
+    <section id="metrics-tab" class="tab-panel">
+      <h2>Metrics</h2>
+
+      <div id="metrics-cards"
+           hx-get="/api/dashboard/metrics"
+           hx-trigger="load"
+           hx-ext="client-side-templates"
+           mustache-template="metrics-cards-tmpl"
+           hx-target="this"
+           hx-swap="innerHTML">
+        <div class="loading-spinner htmx-indicator"></div>
+      </div>
+
+      <div class="metrics-section" style="margin-top:24px;">
+        <h3>Prometheus Metrics</h3>
+        <div class="prom-metrics"
+             hx-get="/metrics"
+             hx-trigger="load"
+             hx-target="this"
+             hx-swap="innerHTML">
+          <div class="loading-spinner htmx-indicator"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ================================================================
+     Mustache Templates
+     ================================================================ -->
+
+<!-- Overview: Metrics cards -->
+<script id="overview-metrics-tmpl" type="text/mustache-template">
+<div class="card-grid">
+  <div class="card">
+    <div class="card-header">Total Objectives</div>
+    <div class="card-value" style="color:var(--accent-blue);">{{data.total_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Active</div>
+    <div class="card-value" style="color:var(--accent-orange);">{{data.active_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Completed</div>
+    <div class="card-value" style="color:var(--accent-green);">{{data.completed_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Failed</div>
+    <div class="card-value" style="color:var(--accent-red);">{{data.failed_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Abandoned</div>
+    <div class="card-value" style="color:var(--text-muted);">{{data.abandoned_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Avg Retries</div>
+    <div class="card-value" style="color:var(--accent-cyan);font-size:24px;">{{data.avg_retry_count}}</div>
+  </div>
+</div>
+{{#data.objectives_by_status.length}}
+<div class="metrics-section">
+  <h3>By Status</h3>
+  <div class="metrics-row">
+    {{#data.objectives_by_status}}
+    <div class="metric-chip">
+      <span class="metric-label">{{status}}</span>
+      <span class="metric-value">{{count}}</span>
+    </div>
+    {{/data.objectives_by_status}}
+  </div>
+</div>
+{{/data.objectives_by_status.length}}
+</script>
+
+<!-- Overview: Scheduler status -->
+<script id="overview-scheduler-tmpl" type="text/mustache-template">
+<div class="card" style="margin-bottom:0;">
+  <div class="card-header">Scheduler</div>
+  <div class="sched-row">
+    <div class="sched-item">
+      <span class="sched-label">Active</span>
+      <span class="sched-value">{{data.active_count}}</span>
+    </div>
+    <div class="sched-item">
+      <span class="sched-label">Queued</span>
+      <span class="sched-value">{{data.queue_length}}</span>
+    </div>
+    <div class="sched-item">
+      <span class="sched-label">Dispatched</span>
+      <span class="sched-value">{{data.total_dispatched}}</span>
+    </div>
+    <div class="sched-item">
+      <span class="sched-label">Max Concurrent</span>
+      <span class="sched-value">{{data.max_concurrent}}</span>
+    </div>
+    <div class="sched-item">
+      <span class="sched-label">Can Dispatch</span>
+      <span class="sched-value" style="color:{{#data.can_dispatch}}var(--accent-green){{/data.can_dispatch}}{{^data.can_dispatch}}var(--accent-red){{/data.can_dispatch}};">
+        {{#data.can_dispatch}}Yes{{/data.can_dispatch}}{{^data.can_dispatch}}No{{/data.can_dispatch}}
+      </span>
+    </div>
+  </div>
+</div>
+</script>
+
+<!-- Overview: Recent events -->
+<script id="overview-events-tmpl" type="text/mustache-template">
+<div class="card">
+  <div class="card-header">Recent Events</div>
+  {{#data.length}}
+  <div class="timeline">
+    {{#data}}
+    <div class="timeline-item">
+      <div class="event-header">
+        <span class="event-kind">{{kind}}</span>
+        <span class="event-time">{{timestamp}}</span>
+      </div>
+      <div class="event-actor">{{actor.kind}} / {{actor.id}}</div>
+      {{#objective_id}}<div class="event-objective">{{objective_id}}</div>{{/objective_id}}
+    </div>
+    {{/data}}
+  </div>
+  {{/data.length}}
+  {{^data.length}}
+  <div class="empty-state">No events recorded yet.</div>
+  {{/data.length}}
+</div>
+</script>
+
+<!-- Timeline: full event list -->
+<script id="timeline-events-tmpl" type="text/mustache-template">
+{{#data.length}}
+<div class="timeline">
+  {{#data}}
+  <div class="timeline-item">
+    <div class="event-header">
+      <span class="event-kind">{{kind}}</span>
+      <span class="event-time">{{timestamp}}</span>
+    </div>
+    <div class="event-actor">{{actor.kind}} / {{actor.id}}</div>
+    {{#objective_id}}<div class="event-objective">{{objective_id}}</div>{{/objective_id}}
+    {{#payload}}{{#msg}}<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">{{msg}}</div>{{/msg}}{{/payload}}
+  </div>
+  {{/data}}
+</div>
+{{/data.length}}
+{{^data.length}}
+<div class="empty-state">No events recorded yet.</div>
+{{/data.length}}
+</script>
+
+<!-- Objectives: table -->
+<script id="objectives-table-tmpl" type="text/mustache-template">
+{{#data.length}}
+<div class="table-container">
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Title</th>
+        <th>Status</th>
+        <th>Priority</th>
+        <th>Retries</th>
+        <th>Updated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#data}}
+      <tr class="obj-row">
+        <td><span class="event-id">{{id}}</span></td>
+        <td style="color:var(--text-primary);font-weight:500;">{{title}}</td>
+        <td><span class="badge" data-status="{{status}}">{{status}}</span></td>
+        <td>{{priority}}</td>
+        <td>{{retry_count}}</td>
+        <td style="font-size:12px;">{{updated_at}}</td>
+      </tr>
+      {{/data}}
+    </tbody>
+  </table>
+</div>
+{{/data.length}}
+{{^data.length}}
+<div class="empty-state">No objectives found.</div>
+{{/data.length}}
+</script>
+
+<!-- Audit Log: hash-chain table -->
+<script id="audit-table-tmpl" type="text/mustache-template">
+{{#data.length}}
+<div class="table-container" style="margin-bottom:24px;">
+  <table>
+    <thead>
+      <tr>
+        <th>Event ID</th>
+        <th>Kind</th>
+        <th>Timestamp</th>
+        <th>Objective</th>
+        <th>Hash</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#data}}
+      <tr>
+        <td><span class="event-id">{{event_id}}</span></td>
+        <td><span class="badge" data-status="{{kind}}">{{kind}}</span></td>
+        <td style="font-size:12px;">{{timestamp}}</td>
+        <td>{{#objective_id}}{{objective_id}}{{/objective_id}}{{^objective_id}}-{{/objective_id}}</td>
+        <td><span class="hash-preview" title="Full: {{hash}}">{{hash}}</span></td>
+      </tr>
+      {{/data}}
+    </tbody>
+  </table>
+</div>
+
+<h3 style="font-size:14px;font-weight:600;margin-bottom:12px;">Hash Chain</h3>
+<div class="hash-chain">
+  {{#data}}
+  <div class="chain-link">
+    <span class="hash-label">Prev:</span>
+    <span class="hash-value" title="{{prev_hash}}">{{prev_hash}}</span>
+    <span style="color:var(--text-muted);margin:0 4px;">-></span>
+    <span class="hash-label">Hash:</span>
+    <span class="hash-value" style="color:var(--accent-green);" title="{{hash}}">{{hash}}</span>
+  </div>
+  <div class="chain-arrow">v</div>
+  {{/data}}
+</div>
+{{/data.length}}
+{{^data.length}}
+<div class="empty-state">No audit entries yet.</div>
+{{/data.length}}
+</script>
+
+<!-- Metrics: cards + breakdown -->
+<script id="metrics-cards-tmpl" type="text/mustache-template">
+<div class="card-grid">
+  <div class="card">
+    <div class="card-header">Total Objectives</div>
+    <div class="card-value" style="color:var(--accent-blue);">{{data.total_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Active</div>
+    <div class="card-value" style="color:var(--accent-orange);">{{data.active_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Completed</div>
+    <div class="card-value" style="color:var(--accent-green);">{{data.completed_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Failed</div>
+    <div class="card-value" style="color:var(--accent-red);">{{data.failed_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Abandoned</div>
+    <div class="card-value" style="color:var(--text-muted);">{{data.abandoned_objectives}}</div>
+  </div>
+  <div class="card">
+    <div class="card-header">Avg Retry Count</div>
+    <div class="card-value" style="color:var(--accent-cyan);font-size:24px;">{{data.avg_retry_count}}</div>
+  </div>
+</div>
+
+{{#data.objectives_by_status.length}}
+<div class="metrics-section">
+  <h3>Objectives by Status</h3>
+  <div class="metrics-row">
+    {{#data.objectives_by_status}}
+    <div class="metric-chip">
+      <span class="metric-label">{{status}}</span>
+      <span class="metric-value">{{count}}</span>
+    </div>
+    {{/data.objectives_by_status}}
+  </div>
+</div>
+{{/data.objectives_by_status.length}}
+</script>
+
+<!-- ================================================================
+     Post-render badge colorizer
+     ================================================================ -->
+<script>
+document.addEventListener('htmx:afterSwap', function (event) {
+    // Colorize badges based on status text
+    event.target.querySelectorAll('.badge').forEach(function (el) {
+        var text = el.textContent.trim().toLowerCase();
+        var cls = window.statusBadge(text);
+        if (cls) el.classList.add(cls);
+    });
+
+    // Format ISO timestamps in tables
+    event.target.querySelectorAll('td').forEach(function (el) {
+        var text = el.textContent.trim();
+        if (text.match(/^\d{4}-\d{2}-\d{2}T/)) {
+            el.textContent = window.formatTime(text);
+        }
+    });
+
+    // Truncate hash values in chain display
+    event.target.querySelectorAll('.hash-value').forEach(function (el) {
+        if (el.textContent.length > 16) {
+            el.textContent = window.truncHash(el.textContent.trim(), 16);
+        }
+    });
+
+    // Truncate event IDs in tables
+    event.target.querySelectorAll('.event-id').forEach(function (el) {
+        var id = el.textContent.trim();
+        if (id.length > 16) {
+            el.textContent = window.shortId(id, 16);
+        }
+    });
+});
+</script>
+
+</body>
+</html>
