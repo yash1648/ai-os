@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "workers/ai-worker"]
+members = ["kernel", "sdk", "workers/ai-worker"]
 
 [workspace.package]
 version = "0.1.0"

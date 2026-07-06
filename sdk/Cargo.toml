@@ -1,0 +1,10 @@
+[package]
+name = "ai-os-sdk"
+version.workspace = true
+edition = "2021"
+description = "AI-OS Plugin SDK — trait definitions, governance stubs, and plugin types"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
