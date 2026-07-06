@@ -48,6 +48,18 @@ This indirection is deliberate: it bounds the amount of context injected into an
 
 The PIL is updated synchronously whenever the Kernel applies a diff to Git — index updates are part of the same transaction boundary as the commit, so no worker ever queries a PIL that reflects a state older than the last successfully applied change. During concurrent objective execution, the PIL exposes point-in-time snapshots keyed to the repository ref a given Execution Manifest was built from, preventing workers from reasoning about a moving target.
 
+### Plan Decomposition & Admission
+
+The PIL hosts the **planner subsystem** with three workflow endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/v1/plan/decompose` | Business objective → `ExecutionPlan` using LLM decomposition |
+| `POST /api/v1/plan/admit` | Deterministic validation (structural, domain, DAG, constitution, criteria, risks) |
+| `POST /api/v1/plan/submit` | Admitted plan → Kernel objectives (calls Kernel CRUD API) |
+
+The decomposition uses an OpenAI-compatible LLM when configured, or a deterministic mock for local development. Admission is purely deterministic (no LLM) — an `AdmissionVerdict` with zero error-severity issues is required before submission.
+
 ## Relationship to the Kernel
 
 The PIL is read-heavy and advisory: it informs decisions but does not make them. The Kernel does not trust worker-reported understanding of PIL data; the Guardian independently re-derives the facts it needs (e.g., dependency graph state) from the PIL at validation time, rather than trusting the worker's manifest-time snapshot, to guard against staleness or manipulation.

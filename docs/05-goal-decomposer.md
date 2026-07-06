@@ -32,9 +32,38 @@ An **Execution Plan**: an immutable, versioned document containing:
 
 Allowing execution plans to be silently edited mid-flight is one of the most common sources of coordination failure in multi-agent systems — objectives get reprioritized while workers are mid-execution against the old plan, dependencies become stale, and audit trails become incoherent. AI-OS instead treats a plan revision as a new plan, explicitly superseding the old one, with the Kernel responsible for reconciling in-flight objectives (completing them under the old plan, or cancelling and re-issuing them under the new one, per policy).
 
+## Admission Control
+
+Before a plan reaches the Kernel, it passes through **Plan Admission** — a deterministic validation layer that checks six categories without an LLM:
+
+| Category | What it checks | Severity |
+|---|---|---|
+| **Structural** | Blank titles/domains/descriptions | Error / Warning |
+| **Domains** | Unknown owning domains | Warning |
+| **DAG** | Cycles and self-loops in dependencies | Error |
+| **Constitution** | Keyword matches against constitutional rules | Info (advisory) |
+| **Criteria** | Objectives missing success criteria | Warning |
+| **Risks** | Unattended risk categories (`schema_change`, `public_interface`, `security_sensitive`, `external_dependency`) and blank risk descriptions | Warning |
+
+Only **error**-severity issues cause rejection; warnings are advisory. The admission verdict is returned to the caller, who may choose to fix issues and re-submit.
+
+## Full Workflow
+
+The complete pipeline from business objective to Kernel execution is:
+
+```
+POST /api/v1/plan/decompose   → ExecutionPlan proposal
+POST /api/v1/plan/admit        → AdmissionVerdict (validation)
+POST /api/v1/plan/submit       → Kernel creates all objectives
+```
+
+Each step is a separate REST call — the caller inspects the result of each before proceeding.
+
 ## Interaction with the Kernel
 
-The Goal Decomposer does not submit objectives directly for execution. It hands the completed plan to the Kernel's admission control, which independently re-validates the plan (constitutional compliance, ownership resolution, cycle detection in the dependency graph) before accepting it. The Decomposer's output is a proposal; the Kernel's admission is the authority.
+The Goal Decomposer does not submit objectives directly for execution. It hands the completed plan to the **Admission Service**, which independently re-validates the plan (constitutional compliance, ownership resolution, cycle detection in the dependency graph) before accepting it. Once admitted, the **Submit endpoint** creates all objectives in the Kernel via its CRUD API, preserving the DAG structure, owning domains, and risk annotations.
+
+The Decomposer's output is a proposal; Admission + Kernel is the authority.
 
 ## Failure Modes
 

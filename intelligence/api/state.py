@@ -23,6 +23,15 @@ from intelligence.semantic_search.searcher import SemanticSearch
 from intelligence.symbol_graph.graph import SymbolGraph
 from intelligence.symbol_graph.models import SymbolGraphConfig
 
+# Lazy import to avoid httpx dependency at module level
+def _create_llm_client():
+    """Return an ``OpenAiLlmClient`` if an API key is configured, else ``MockLlmClient``."""
+    from planner.llm import MockLlmClient, OpenAiLlmClient
+    import os
+    if os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY"):
+        return OpenAiLlmClient()
+    return MockLlmClient()
+
 
 class PilState:
     """Holds all PIL engine instances, lazily initialised.
@@ -45,6 +54,7 @@ class PilState:
         self._dependency_graph: Optional[DependencyGraph] = None
         self._semantic_search: Optional[SemanticSearch] = None
         self._indexer: Optional[Indexer] = None
+        self._llm = None  # lazy, recreating on each call is acceptable
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -54,6 +64,13 @@ class PilState:
     def root(self) -> Path:
         """Project root directory passed at construction."""
         return self._root
+
+    @property
+    def llm_client(self):
+        """LLM client for the GoalDecomposer (lazy)."""
+        if self._llm is None:
+            self._llm = _create_llm_client()
+        return self._llm
 
     # ------------------------------------------------------------------
     # Lazy engine properties

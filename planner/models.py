@@ -208,3 +208,66 @@ class ExecutionPlan(BaseModel):
         methods) and by the Kernel rejecting mutated plan IDs.
         """
         return self.model_copy(deep=True)
+
+
+# ── Admission models ────────────────────────────────────────────────────────────
+
+
+class VerdictSeverity(str, Enum):
+    """Severity of an admission issue — errors block admission, warnings are advisory."""
+
+    error = "error"
+    warning = "warning"
+
+
+class AdmissionIssue(BaseModel):
+    """A single issue found during plan admission review.
+
+    .. attribute:: severity
+        ``error`` blocks admission; ``warning`` is advisory.
+    .. attribute:: category
+        One of ``structural``, ``domain``, ``dag``, ``constitution``, ``criteria``, ``risk``.
+    .. attribute:: objective_id
+        Objective this issue relates to (``None`` for plan-level issues).
+    .. attribute:: message
+        Human-readable description of the issue.
+    .. attribute:: rule_ref
+        Optional reference to a constitution rule that triggered the issue.
+    """
+
+    severity: VerdictSeverity = Field(..., description="error or warning")
+    category: str = Field(
+        ...,
+        description="Issue category — structural, domain, dag, constitution, criteria, risk.",
+    )
+    objective_id: str | None = Field(
+        None, description="Objective ID if objective-specific; None for plan-level."
+    )
+    message: str = Field(..., min_length=1, description="Human-readable issue description.")
+    rule_ref: str | None = Field(
+        None, description="Optional constitution rule reference."
+    )
+
+
+class AdmissionVerdict(BaseModel):
+    """Result of admitting an execution plan.
+
+    .. attribute:: passed
+        ``True`` only when there are zero ``error``-severity issues.
+    .. attribute:: plan_id
+        The plan ID that was reviewed.
+    .. attribute:: issues
+        All issues found during admission review (errors + warnings).
+    .. attribute:: reviewed_at
+        ISO-8601 timestamp of the review.
+    """
+
+    passed: bool = Field(..., description="True iff no error-severity issues exist.")
+    plan_id: str = Field(..., description="The plan ID that was reviewed.")
+    issues: list[AdmissionIssue] = Field(
+        default_factory=list, description="All issues found (errors + warnings)."
+    )
+    reviewed_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="ISO-8601 timestamp of the review.",
+    )

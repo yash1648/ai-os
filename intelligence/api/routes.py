@@ -13,6 +13,10 @@ from fastapi import APIRouter, Query, Request
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from intelligence.api.models import (
+    AdmitRequest,
+    AdmitResponse,
+    AdmissionIssueItem,
+    AdmissionVerdictItem,
     AdrSearchResultItem,
     ConstitutionSectionItem,
     DecomposeRequest,
@@ -25,6 +29,8 @@ from intelligence.api.models import (
     ResolvedDependenciesItem,
     RiskAnnotationItem,
     SemanticSearchResultItem,
+    SubmitRequest,
+    SubmitResponse,
     SuccessCriteriaItem,
     SymbolDefItem,
 )
@@ -284,19 +290,20 @@ async def dependency_graph_endpoint(
 
 
 @router.post("/plan/decompose")
-async def plan_decompose(body: DecomposeRequest) -> DecomposeResponse:
+async def plan_decompose(body: DecomposeRequest, request: Request) -> DecomposeResponse:
     """Decompose a business objective into an execution plan.
 
-    Uses the GoalDecomposer (with a mock LLM client for now) to produce an
-    immutable ``ExecutionPlan`` proposal. The Kernel independently validates
-    this before admission.
+    Uses the GoalDecomposer with the configured LLM client (OpenAI-compatible
+    when ``OPENAI_API_KEY`` or ``OPENROUTER_API_KEY`` is set, otherwise a
+    deterministic mock for local development).  Produces an immutable
+    ``ExecutionPlan`` proposal.  The Kernel independently validates this
+    before admission.
     """
     try:
         from planner.decomposer import GoalDecomposer
-        from planner.llm import MockLlmClient
 
-        llm = MockLlmClient()
-        decomposer = GoalDecomposer(llm_client=llm)
+        state = _get_state(request)
+        decomposer = GoalDecomposer(llm_client=state.llm_client)
         plan = decomposer.decompose(body.objective, context=body.context or {})
     except ValueError as e:
         return DecomposeResponse(success=False, error=str(e))
@@ -351,4 +358,148 @@ async def plan_decompose(body: DecomposeRequest) -> DecomposeResponse:
             created_at=plan.created_at,
             content_hash=plan.content_hash,
         ),
+    )
+
+
+# ── plan / admit ──────────────────────────────────────────────────────────────────
+
+
+@router.post("/plan/admit")
+async def plan_admit(body: AdmitRequest, request: Request) -> AdmitResponse:
+    """Validate and admit a decomposed execution plan.
+
+    Runs structural, domain, DAG, criteria, risk, and constitution-alignment
+    checks on the submitted plan.  Returns an ``AdmissionVerdict`` — admission
+    passes only when there are zero error-severity issues.
+    """
+    try:
+        from planner.admission import PlanAdmissionService
+        from planner.models import (
+            ExecutionPlan as PlannerExecutionPlan,
+            Objective as PlannerObjective,
+            RiskAnnotation as PlannerRiskAnnotation,
+            RiskLevel as PlannerRiskLevel,
+            SuccessCriteria as PlannerSuccessCriteria,
+        )
+
+        # Reconstruct the planner model from the API item.
+        objectives: list[PlannerObjective] = []
+        for oi in body.plan.objectives:
+            obj = PlannerObjective(
+                id=oi.id,
+                title=oi.title,
+                description=oi.description,
+                owning_domain=oi.owning_domain,
+                priority=oi.priority,
+                dependencies=oi.dependencies,
+                success_criteria=[
+                    PlannerSuccessCriteria(
+                        description=c.description,
+                        verification_hint=c.verification_hint,
+                    )
+                    for c in oi.success_criteria
+                ],
+                risks=[
+                    PlannerRiskAnnotation(
+                        category=r.category,
+                        description=r.description,
+                        level=PlannerRiskLevel(r.level),
+                        affected_objective_ids=r.affected_objective_ids,
+                    )
+                    for r in oi.risks
+                ],
+                status=oi.status,
+            )
+            objectives.append(obj)
+
+        plan = PlannerExecutionPlan(
+            plan_id=body.plan.plan_id,
+            version=body.plan.version,
+            supersedes=body.plan.supersedes,
+            objective_description=body.plan.objective_description,
+            rationale=body.plan.rationale,
+            objectives=objectives,
+            plan_level_risks=[
+                PlannerRiskAnnotation(
+                    category=r.category,
+                    description=r.description,
+                    level=PlannerRiskLevel(r.level),
+                    affected_objective_ids=r.affected_objective_ids,
+                )
+                for r in body.plan.plan_level_risks
+            ],
+            created_at=body.plan.created_at,
+            content_hash=body.plan.content_hash,
+        )
+
+        state = _get_state(request)
+        service = PlanAdmissionService()
+        verdict = service.admit(
+            plan,
+            known_domains=body.known_domains,
+            constitution_engine=state.constitution_engine,
+        )
+    except Exception as e:
+        return AdmitResponse(success=False, error=f"Admission error: {e}")
+
+    return AdmitResponse(
+        success=True,
+        data=AdmissionVerdictItem(
+            passed=verdict.passed,
+            plan_id=verdict.plan_id,
+            issues=[
+                AdmissionIssueItem(
+                    severity=i.severity.value,
+                    category=i.category,
+                    objective_id=i.objective_id,
+                    message=i.message,
+                    rule_ref=i.rule_ref,
+                )
+                for i in verdict.issues
+            ],
+            reviewed_at=verdict.reviewed_at,
+        ),
+    )
+
+
+# ── plan / submit ──────────────────────────────────────────────────────────────────
+
+
+@router.post("/plan/submit")
+async def plan_submit(body: SubmitRequest, request: Request) -> SubmitResponse:
+    """Submit an admitted execution plan to the Kernel for execution.
+
+    Creates each objective from the plan in the Kernel via
+    ``POST /api/v1/objectives``.  When an admission verdict is provided
+    and ``passed`` is false, the request is rejected with a 400-like
+    error response.
+    """
+    # Reject plans that have not passed admission
+    if body.verdict is not None and not body.verdict.passed:
+        return SubmitResponse(
+            success=False,
+            error=(
+                f"Plan '{body.plan.plan_id}' has not passed admission "
+                f"(found {len(body.verdict.issues)} issue(s)). "
+                "Run POST /api/v1/plan/admit and resolve errors first."
+            ),
+        )
+
+    try:
+        from intelligence.kernel_client import KernelClient
+
+        client = KernelClient()
+        objectives_dicts = [o.model_dump() for o in body.plan.objectives]
+        result = client.submit_plan(
+            plan_id=body.plan.plan_id,
+            objectives=objectives_dicts,
+            plan_level_risks=[r.model_dump() for r in body.plan.plan_level_risks],
+        )
+    except Exception as e:
+        return SubmitResponse(success=False, error=f"Submission error: {e}")
+
+    has_errors = len(result.get("errors", [])) > 0
+    return SubmitResponse(
+        success=not has_errors,
+        data=result,
     )

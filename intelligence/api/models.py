@@ -184,3 +184,83 @@ class DecomposeResponse(BaseModel):
     success: bool = Field(..., description="Whether decomposition succeeded.")
     data: ExecutionPlanItem | None = Field(None, description="The execution plan, if successful.")
     error: str | None = Field(None, description="Error message, if decomposition failed.")
+
+
+# ── Plan admission ────────────────────────────────────────────────────────────────
+
+
+class AdmitRequest(BaseModel):
+    """Request body for ``POST /api/v1/plan/admit``."""
+
+    plan: ExecutionPlanItem = Field(..., description="The execution plan to admit.")
+    known_domains: list[str] | None = Field(
+        None, description="Optional override of known domain identifiers."
+    )
+
+
+class AdmissionIssueItem(BaseModel):
+    """A single issue found during plan admission review."""
+
+    severity: str = Field(..., description="error or warning.")
+    category: str = Field(..., description="Issue category.")
+    objective_id: str | None = Field(None, description="Objective ID if objective-specific.")
+    message: str = Field(..., description="Human-readable issue description.")
+    rule_ref: str | None = Field(None, description="Optional constitution rule reference.")
+
+
+class AdmissionVerdictItem(BaseModel):
+    """Admission review result."""
+
+    passed: bool = Field(..., description="True iff no error-severity issues exist.")
+    plan_id: str = Field(..., description="The plan ID that was reviewed.")
+    issues: list[AdmissionIssueItem] = Field(
+        default_factory=list, description="All issues found (errors + warnings)."
+    )
+    reviewed_at: str = Field(..., description="ISO-8601 timestamp of the review.")
+
+
+class AdmitResponse(BaseModel):
+    """Response body for the admit endpoint."""
+
+    success: bool = Field(..., description="Whether the admission check completed.")
+    data: AdmissionVerdictItem | None = Field(None, description="The admission verdict.")
+    error: str | None = Field(None, description="Error message if admission failed.")
+
+
+# ── Plan submission ─────────────────────────────────────────────────────────────
+
+
+class SubmitRequest(BaseModel):
+    """Request body for ``POST /api/v1/plan/submit``.
+
+    Accepts an execution plan with an optional admission verdict.
+    When an admission verdict is provided and ``passed`` is false,
+    the submit is rejected.
+    """
+
+    plan: ExecutionPlanItem = Field(..., description="The execution plan to submit to the Kernel.")
+    verdict: AdmissionVerdictItem | None = Field(
+        None, description="Optional admission verdict. If provided and not passed, submit is rejected."
+    )
+
+
+class CreatedObjectiveItem(BaseModel):
+    """A single objective created in the Kernel."""
+
+    title: str = Field(..., description="Objective title.")
+    id: str = Field(..., description="Kernel-assigned objective ID.")
+
+
+class SubmitErrorItem(BaseModel):
+    """An error that occurred while creating an objective."""
+
+    title: str = Field(..., description="Objective title that failed.")
+    error: str = Field(..., description="Error message.")
+
+
+class SubmitResponse(BaseModel):
+    """Response body for the submit endpoint."""
+
+    success: bool = Field(..., description="Whether the submission completed.")
+    data: dict | None = Field(None, description="Submission result with objective_ids and errors.")
+    error: str | None = Field(None, description="Error message if submission failed.")

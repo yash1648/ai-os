@@ -6,43 +6,87 @@ The Kernel exposes a REST API as the primary integration surface for external to
 
 ## Endpoints
 
-### Objectives & Plans
+Two servers expose REST APIs:
 
-`POST /plans` — submit a business objective to the Goal Decomposer; returns a proposed Execution Plan.
+- **Kernel** (port 8081) — core execution engine, objective lifecycle, scheduler
+- **PIL sidecar** (port 8082) — intelligence queries, plan decomposition, admission
 
-`POST /plans/{plan_id}/admit` — request Kernel admission of a plan into active scheduling.
+### Kernel Endpoints
 
-`GET /objectives/{objective_id}` — retrieve current state, history, and manifest reference for an objective.
+`POST /api/v1/objectives` — create a new objective; returns its UUID.
 
-`POST /objective` — (legacy/simple path) directly submit a single well-formed objective, bypassing the Goal Decomposer, for advanced/manual use.
+`GET /api/v1/objectives` — list all objectives.
 
-### Execution
+`GET /api/v1/objectives/{id}` — retrieve objective state and history.
 
-`POST /worker/start` — (internal/administrative) manually trigger dispatch of a `READY` objective; primarily used in testing and Stage 1 single-worker deployments.
+`POST /api/v1/objectives/{id}/ready` — mark an objective as READY for scheduling.
 
-`POST /review` — submit a diff for Review/Guardian evaluation outside the normal Kernel-orchestrated flow (used for local development / pre-flight checks).
+`POST /api/v1/objectives/{id}/transition` — request a state machine transition.
 
-`POST /rollback` — trigger a Kernel rollback for a given objective or commit range.
+`DELETE /api/v1/objectives/{id}` — abandon (soft-delete) an objective.
 
-### Approvals
+`GET /api/v1/scheduler/status` — scheduler stats (active, queued, dispatched).
 
-`GET /approvals/pending` — list objectives awaiting a Human Approval Gate decision.
+`GET /api/v1/scheduler/queue` — peek into the dispatch queue.
 
-`POST /approvals/{objective_id}/grant` — record human approval.
+`POST /api/v1/scheduler/dispatch` — trigger dispatch of the next queued objective.
 
-`POST /approvals/{objective_id}/deny` — record human denial, with required justification text.
+`POST /api/v1/validate` — validate a state machine transition without applying it.
 
-### Observability
+`GET /api/v1/events` — SSE stream of real-time events.
 
-`GET /timeline` — retrieve the event-derived timeline for a plan or objective.
+`GET /api/v1/events/objective/{id}` — event timeline for one objective.
 
-`GET /interfaces` — query the Interface Registry.
+`GET /api/v1/events/recent` — recent events across all objectives.
 
-`GET /interfaces/{interface_id}/consumers` — blast-radius lookup.
+`GET /api/v1/events/timeline` — query events by time range.
 
-`GET /metrics` — retrieve aggregate metrics (see `19-api-specification.md` metrics section and `24-testing-strategy.md`).
+`GET /api/dashboard/timeline` — dashboard timeline view.
 
-`GET /audit/{objective_id}` — retrieve the full, hash-chained audit trail for an objective.
+`GET /api/dashboard/objectives` — dashboard objectives list.
+
+`GET /api/dashboard/metrics` — dashboard aggregate metrics.
+
+`GET /api/dashboard/audit-log` — hash-chained audit log.
+
+### PIL Endpoints
+
+`GET /api/v1/health` — PIL health check.
+
+`GET /api/v1/adr/search?q=...&status=...` — search ADR records.
+
+`GET /api/v1/constitution/validate?action=...` — validate text against constitution.
+
+`GET /api/v1/symbol/resolve?name=...&kind=...` — resolve symbols by name.
+
+`GET /api/v1/search/semantic?q=...&top_k=...` — semantic code/document search.
+
+`GET /api/v1/indexer/status` — indexer statistics.
+
+`GET /api/v1/dependency/resolve?name=...` — resolve module dependencies.
+
+`GET /api/v1/dependency/graph` — full dependency graph stats and edges.
+
+#### Plan Workflow Endpoints
+
+```
+POST /api/v1/plan/decompose  POST /api/v1/plan/admit  POST /api/v1/plan/submit
+    │                              │                         │
+    ▼                              ▼                         ▼
+ExecutionPlan              AdmissionVerdict          Kernel objectives
+```
+
+1. **`POST /api/v1/plan/decompose`** — submit a business objective; returns an `ExecutionPlan` (immutable DAG of objectives with criteria and risks).
+   - Uses an OpenAI-compatible LLM when `OPENAI_API_KEY` or `OPENROUTER_API_KEY` is set; otherwise falls back to a deterministic mock for local development.
+
+2. **`POST /api/v1/plan/admit`** — validate a plan against six deterministic checks
+   (structural, domain, DAG, constitution, criteria, risks). Returns an
+   `AdmissionVerdict`; plans with error-severity issues are rejected.
+
+3. **`POST /api/v1/plan/submit`** — submit an admitted plan to the Kernel.
+   Creates each objective via the Kernel's CRUD API, preserving the DAG structure,
+   owning domains, and risk annotations. Rejects plans that have not passed
+   admission.
 
 ## Authentication & Authorization
 
