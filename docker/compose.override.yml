@@ -1,0 +1,44 @@
+# =============================================================================
+# AI-OS Docker Compose — Development Override
+# =============================================================================
+#
+# Merge with the production compose file for local development:
+#   docker compose -f docker/docker-compose.yml -f docker/compose.override.yml up
+#
+# What this override provides:
+#   - Source directory mounts for hot-reload (Python) and manual rebuild (Rust)
+#   - Debug-level logging
+#   - Uvicorn auto-reload for the intelligence service
+#
+# =============================================================================
+
+services:
+
+  kernel:
+    environment:
+      - RUST_LOG=debug
+      - AI_OS_LOG_LEVEL=debug
+    # Mount source directories so rebuilds (docker compose restart kernel)
+    # pick up local changes without a full rebuild
+    volumes:
+      - ../kernel:/app/kernel
+      - ../workers:/app/workers
+
+  intelligence:
+    environment:
+      - RUST_LOG=debug
+      - AI_OS_LOG_LEVEL=debug
+    # Mount source for live reload
+    volumes:
+      - ../intelligence:/app/intelligence
+      - ../planner:/app/planner
+    # Enable uvicorn auto-reload for instant feedback on code changes
+    command:
+      - uvicorn
+      - intelligence.main:create_app
+      - --factory
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8082"
+      - --reload

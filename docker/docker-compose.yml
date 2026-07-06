@@ -1,0 +1,72 @@
+# =============================================================================
+# AI-OS Docker Compose — production / development orchestration
+# =============================================================================
+#
+# Build context is the project root (../ relative to this file) because both
+# Dockerfiles reference files at the workspace level (Cargo.toml, kernel/,
+# workers/, intelligence/, planner/).
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml -f docker/compose.override.yml up -d
+#
+# =============================================================================
+
+services:
+
+  # ── Kernel Service ──────────────────────────────────────────────────────────
+  # Rust-based deterministic orchestrator with axum HTTP API
+  kernel:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.kernel
+    ports:
+      - "8080:8080"
+    environment:
+      # Override default bind address (127.0.0.1) so axum listens on all
+      # interfaces inside the container
+      - AI_OS_BIND_ADDRESS=0.0.0.0
+      - AI_OS_BIND_PORT=8080
+      # SQLite database stored on a named volume for persistence
+      - AI_OS_DATABASE_URL=sqlite:///data/ai-os.db
+      # Logging defaults
+      - AI_OS_LOG_LEVEL=info
+      - AI_OS_LOG_FORMAT=compact
+    depends_on:
+      intelligence:
+        condition: service_started
+    volumes:
+      - kernel-data:/data
+    networks:
+      - ai-os-net
+    restart: unless-stopped
+
+  # ── Intelligence Service ────────────────────────────────────────────────────
+  # Python FastAPI sidecar — project intelligence layer (PIL)
+  intelligence:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.intelligence
+    ports:
+      - "8082:8082"
+    environment:
+      - UVICORN_PORT=8082
+      # Kernel client URL (used by intelligence.kernel_client.KernelClient)
+      - KERNEL_BASE_URL=http://kernel:8080
+    volumes:
+      - intelligence-data:/data
+    networks:
+      - ai-os-net
+    restart: unless-stopped
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  ai-os-net:
+    driver: bridge
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  kernel-data:
+    driver: local
+  intelligence-data:
+    driver: local

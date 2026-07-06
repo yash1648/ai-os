@@ -1,0 +1,59 @@
+# Docker build context ignores
+# This file is read by Docker from the build context root.
+# The canonical copy lives at docker/.dockerignore — keep both in sync.
+
+# Rust build artifacts
+target/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Version control
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# AI-OS agent infrastructure
+.omo/
+.swarm/
+.codegraph/
+
+# Node.js
+node_modules/
+
+# Secrets (never ship these)
+.env
+.env.local
+*.pem
+*.key
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Documentation build
+docs/_build/
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Test & temp artifacts
+tests/tmp/
+tmp/
+*.log
+memory/*.bak
+
+# Dockerfiles (not needed inside the build)
+docker/

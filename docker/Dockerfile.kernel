@@ -1,0 +1,57 @@
+# =============================================================================
+# AI-OS Kernel — Multi-stage Docker build
+# =============================================================================
+# Stage 1: Builder — compile the Rust kernel + worker crates
+FROM rust:1.82-slim-bookworm AS builder
+
+# Install system dependencies required by git2 (libgit2-sys) and openssl-sys
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy workspace package manifests first (Docker layer caching)
+COPY Cargo.toml Cargo.lock ./
+COPY kernel/Cargo.toml ./kernel/
+COPY workers/ai-worker/Cargo.toml ./workers/ai-worker/
+
+# Create dummy source files to build & cache dependencies separately
+RUN mkdir -p kernel/src workers/ai-worker/src && \
+    echo "fn main() {}" > kernel/src/main.rs && \
+    touch kernel/src/lib.rs && \
+    echo "fn main() {}" > workers/ai-worker/src/main.rs && \
+    touch workers/ai-worker/src/lib.rs
+
+# Build dependencies only (cached until Cargo.toml/Cargo.lock changes)
+RUN cargo build --release --package ai-os-kernel 2>/dev/null || true
+
+# Copy actual source code
+COPY kernel/ ./kernel/
+COPY workers/ ./workers/
+
+# Force rebuild of the real binary (deps layer is already cached)
+RUN touch kernel/src/main.rs kernel/src/lib.rs && \
+    cargo build --release --package ai-os-kernel
+
+# =============================================================================
+# Stage 2: Runtime — minimal debian image with the compiled binary
+FROM debian:bookworm-slim AS runtime
+
+# Runtime dependencies: SSL certs (for HTTPS to intelligence layer) + SQLite
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libsqlite3-0 \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/ai-os-kernel /usr/local/bin/ai-os-kernel
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["ai-os-kernel"]
+CMD ["serve"]

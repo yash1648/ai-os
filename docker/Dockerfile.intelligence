@@ -1,0 +1,36 @@
+# =============================================================================
+# AI-OS Intelligence Layer — Python FastAPI Docker build
+# =============================================================================
+FROM python:3.12-slim-bookworm AS builder
+
+# Prevent Python from writing .pyc files and enable unbuffered output
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install core runtime dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        "fastapi>=0.115.0" \
+        "uvicorn[standard]>=0.34.0" \
+        "pydantic>=2.0.0" \
+        "httpx>=0.28.0" \
+        "pydantic-settings>=2.0.0" \
+        openai \
+        PyYAML \
+        sqlalchemy
+
+# Copy application source
+# Note: planner/ is included because intelligence/api/routes.py imports
+#       planner.decomposer and planner.admission at runtime
+COPY intelligence/ ./intelligence/
+COPY planner/    ./planner/
+
+EXPOSE 8082
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8082/api/v1/health || exit 1
+
+# Use the FastAPI factory pattern — create_app() is defined in intelligence/main.py
+CMD ["uvicorn", "intelligence.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8082"]

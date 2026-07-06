@@ -1,0 +1,52 @@
+# Rust build artifacts
+target/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Version control
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# AI-OS agent infrastructure
+.omo/
+.swarm/
+.codegraph/
+
+# Node.js
+node_modules/
+
+# Secrets (never ship these)
+.env
+.env.local
+*.pem
+*.key
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Documentation build
+docs/_build/
+
+# Database files (created at runtime via volume)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Test & temp artifacts
+tests/tmp/
+tmp/
+*.log
+memory/*.bak
