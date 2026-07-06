@@ -1,6 +1,6 @@
 [project]
 name = "ai-os-intelligence"
-version = "0.1.0"
+version = "0.2.0"
 description = "Project Intelligence Layer (PIL) — FastAPI sidecar for indexing, ADR reasoning, constitution validation, symbol graph queries, and semantic search"
 requires-python = ">=3.12"
 dependencies = [
