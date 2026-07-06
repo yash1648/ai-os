@@ -1,0 +1,36 @@
+# AI-OS Ownership Model — Cross-Domain Example
+#
+# Defines two ownership domains matching the project's actual codebase
+# layout. When ownership enforcement is enabled, the Guardian checks
+# that an objective's changes stay within its allowed domains.
+#
+# See: docs/13-ownership-model.md
+
+domains:
+  - id: project-kernel
+    name: "Project Kernel"
+    owner: "kernel-team"
+    paths:
+      - "kernel/**/*.rs"
+      - "kernel/Cargo.toml"
+    owned_interfaces:
+      - "objective-storage"
+      - "state-machine"
+    approval_required_for:
+      - "public-api"
+
+  - id: docs
+    name: "Documentation"
+    owner: "docs-team"
+    paths:
+      - "docs/**/*.md"
+    owned_interfaces: []
+    approval_required_for: []
+
+  - id: schemas
+    name: "JSON Schemas"
+    owner: "kernel-team"
+    paths:
+      - "schemas/**/*.json"
+    owned_interfaces: []
+    approval_required_for: []

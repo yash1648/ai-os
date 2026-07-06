@@ -1,0 +1,13 @@
+{
+  "title": "Add runtime metrics to kernel and document the design",
+  "description": "Instrument the scheduler with Prometheus histogram metrics for dispatch latency, then write a design doc explaining the metrics surface. The code change touches kernel/src/scheduler.rs (kernel-team domain) and the doc lives in docs/ (docs-team domain).",
+  "owner": "demo-user",
+  "priority": "high",
+  "dependencies": [],
+  "success_criteria": [
+    "Metrics are emitted for each dispatch cycle in scheduler.rs",
+    "Design doc committed to docs/25-performance-benchmarks.md",
+    "All existing tests continue to pass"
+  ],
+  "tags": ["instrumentation", "cross-domain", "documentation", "example"]
+}

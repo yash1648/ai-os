@@ -1,0 +1,13 @@
+{
+  "title": "Example — refactor error handling",
+  "description": "Replace unwrap() calls with proper Result propagation across the kernel's public API surface. Each call site needs a typed error variant and a meaningful context message.",
+  "owner": "demo-user",
+  "priority": "medium",
+  "dependencies": [],
+  "success_criteria": [
+    "No unwrap() calls remain in kernel/src/api.rs",
+    "Each error variant implements std::fmt::Display",
+    "All tests pass after refactor"
+  ],
+  "tags": ["refactor", "error-handling", "example"]
+}

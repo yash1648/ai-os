@@ -1,0 +1,33 @@
+# AI-OS Kernel Configuration — Quick Start
+#
+# This minimal config overrides a few defaults. Omitted fields
+# use the kernel's built-in defaults:
+#   server.bind_port     = 8080
+#   scheduler.max_concurrent = 4
+#   event_bus.capacity   = 4096
+#   logging.level        = "info"
+
+[server]
+bind_address = "127.0.0.1"
+bind_port    = 8080
+
+[database]
+# SQLite file URL — the database is created on first run.
+url = "sqlite://ai-os.db"
+
+[logging]
+level  = "info"
+format = "text"
+
+[scheduler]
+max_concurrent_objectives = 4
+max_retries               = 3
+
+[ownership]
+# Disabled for this quick-start example.
+enforce = false
+
+[execution]
+# Simulate 500ms of work per objective so the output is observably
+# different from instant completion.
+simulation_delay_ms = 500
