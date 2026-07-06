@@ -6,22 +6,24 @@
 ai-os/
 ├── kernel/           # Scheduler, Permission Engine, State Machine, Diff Applier, Rollback Manager
 ├── planner/          # Goal Decomposer
-├── intelligence/      # Project Intelligence Layer: indexes, graphs, search
+├── intelligence/     # Project Intelligence Layer: indexes, graphs, search
 ├── workers/          # Worker runtime + domain-specialized worker configs
 ├── reviewer/         # Reviewer pipeline stage
 ├── guardian/         # Architecture Guardian pipeline stage
 ├── events/           # Event Bus implementation, schemas, subscribers
 ├── policies/         # Machine-checkable Constitution rules, approval-gate policies
 ├── plugins/          # Language and framework plugins
-├── interfaces/        # Declared interface contracts (Interface Registry source)
-├── constitution/      # Human-readable Constitution documents
+├── interfaces/       # Declared interface contracts (Interface Registry source)
+├── constitution/     # Human-readable Constitution documents
 ├── adr/              # Architecture Decision Records
 ├── schemas/          # Canonical JSON Schemas for all core objects
-├── sdk/              # Client SDKs for the Kernel API
-├── dashboard/        # Timeline/observability UI
+├── sdk/              # Plugin SDK crate (Plugin trait, governance stubs, example plugin)
+├── dashboard/        # Timeline/observability UI (htmx SPA)
+├── docker/           # Dockerfiles and Compose configuration for containerized deployment
+├── memory/           # Cross-session memory and knowledge persistence
 ├── docs/             # This documentation set
-├── tests/            # Cross-component integration and conformance tests
-└── examples/         # Worked examples, sample constitutions, sample plans
+├── tests/            # Python integration and conformance test suite
+└── examples/         # Worked examples, quick-start, cross-domain scenarios
 ```
 
 ## Directory Conventions

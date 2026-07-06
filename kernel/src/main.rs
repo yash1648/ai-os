@@ -216,7 +216,7 @@ let metrics_handle = PrometheusBuilder::new()
             }
         }
         None => {
-            println!("AI-OS Kernel v0.1.0");
+            println!("AI-OS Kernel v{}", env!("CARGO_PKG_VERSION"));
             println!("Usage: ai-os <command>");
             println!();
             println!("Commands:");

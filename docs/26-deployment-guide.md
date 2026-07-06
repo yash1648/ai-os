@@ -16,6 +16,7 @@ Kernel, PIL, Event Bus, and worker pools are deployed as independently scalable 
 - A Git repository (or repositories) AI-OS will manage, with appropriate service-account credentials scoped narrowly to the Kernel's Diff Applier (never exposed to workers — see `24-security-model.md`).
 - Access credentials for the chosen LLM provider(s) backing Workers and (optionally) the Reviewer.
 - A configured Project Constitution and initial Ownership Model for the target repository.
+- **For containerized deployment:** Docker and Docker Compose (see `docker/` directory for pre-built multi-stage Dockerfiles for both Kernel and PIL).
 
 ## Configuration Checklist
 
@@ -29,6 +30,32 @@ Kernel, PIL, Event Bus, and worker pools are deployed as independently scalable 
 ## Rollout Recommendation
 
 New adopters are strongly encouraged to begin in a **shadow mode**: AI-OS runs its full pipeline (planning, worker execution, review, guardian evaluation) but the Kernel's Diff Applier is configured to open a pull request rather than merge directly, regardless of gate configuration. This allows a project to validate Guardian rule correctness and worker output quality against real human review before granting AI-OS direct merge authority.
+
+## Containerized Deployment
+
+The `docker/` directory contains production-ready container images for both the Kernel and the Project Intelligence Layer:
+
+| Component | Dockerfile | Base |
+|---|---|---|
+| Kernel | `docker/Dockerfile.kernel` | `rust:1.85-slim-bookworm` (multi-stage) |
+| Intelligence | `docker/Dockerfile.intelligence` | `python:3.12-slim-bookworm` |
+
+### Quick Start
+
+```bash
+# Build and start all services
+docker compose -f docker/docker-compose.yml up --build
+
+# Or with override for development (hot-reload, volume mounts)
+docker compose -f docker/docker-compose.yml -f docker/compose.override.yml up
+```
+
+### Configuration
+
+- The Kernel listens on port `8080` (configurable via `docker-compose.yml` environment variables).
+- The PIL service runs alongside the Kernel; both communicate over the internal Docker network.
+- SQLite database is persisted via a Docker volume (`ai-os-data`).
+- Logs are written to stdout (captured by `docker compose logs`).
 
 ## Upgrade Policy
 
