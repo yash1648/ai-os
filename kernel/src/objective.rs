@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::state_machine::{ObjectiveState, ObjectiveTerminalState};
+use crate::state_machine::{
+    ObjectivePrimaryState, ObjectiveState, ObjectiveTerminalState,
+};
 
 /// A discrete unit of engineering work — the atomic unit the Kernel schedules
 /// and tracks. (docs/01-philosophy-and-terminology.md, docs/20-json-schemas.md)
@@ -173,6 +175,14 @@ impl ObjectiveStore {
 
         Ok(rows.into_iter().map(ObjectiveRow::into_objective).collect())
     }
+
+    /// Number of objectives currently persisted.
+    pub async fn count(&self) -> sqlx::Result<i64> {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM objectives")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(row.0)
+    }
 }
 
 // ── Internal row type for sqlx ────────────────────────────────────────────
@@ -249,6 +259,83 @@ impl ObjectiveRow {
                 .unwrap_or_else(|_| Utc::now()),
         }
     }
+}
+
+/// Insert a small set of realistic sample objectives so the dashboard is not
+/// empty on first boot. Used when the store starts with zero objectives.
+pub async fn seed_sample_objectives(store: &ObjectiveStore) -> sqlx::Result<()> {
+    let now = chrono::Utc::now();
+    let samples = [
+        (
+            "obj-kernel-api",
+            "Expose Kernel HTTP API for objective lifecycle",
+            "Build REST endpoints for create/list/get/transition of objectives.",
+            "platform",
+            Priority::Critical,
+            ObjectiveState::Terminal(ObjectiveTerminalState::Done),
+            vec!["api", "kernel"],
+        ),
+        (
+            "obj-dashboard",
+            "Real-time observability dashboard",
+            "htmx dashboard with overview, timeline, objectives, audit, metrics tabs.",
+            "platform",
+            Priority::High,
+            ObjectiveState::Primary(ObjectivePrimaryState::Ready),
+            vec!["dashboard", "frontend"],
+        ),
+        (
+            "obj-guardian",
+            "Architecture Guardian constitutional enforcement",
+            "Compile constitution into machine-checkable policies and enforce on apply.",
+            "governance",
+            Priority::High,
+            ObjectiveState::Primary(ObjectivePrimaryState::Executing),
+            vec!["guardian", "policies"],
+        ),
+        (
+            "obj-pil",
+            "Project Intelligence Layer indexing",
+            "Code graph, dependency graph, and search index persistence.",
+            "intelligence",
+            Priority::Medium,
+            ObjectiveState::Primary(ObjectivePrimaryState::Discovered),
+            vec!["pil", "indexing"],
+        ),
+        (
+            "obj-federation",
+            "Cross-process worker federation",
+            "Distribute worker pools across processes with consensus coordination.",
+            "platform",
+            Priority::Low,
+            ObjectiveState::Terminal(ObjectiveTerminalState::Abandoned),
+            vec!["federation", "stage-2"],
+        ),
+    ];
+
+    for (idx, (id, title, desc, owner, priority, status, tags)) in samples.iter().enumerate() {
+        let objective = Objective {
+            id: id.to_string(),
+            title: title.to_string(),
+            description: desc.to_string(),
+            owner: owner.to_string(),
+            parent_id: None,
+            priority: priority.clone(),
+            status: status.clone(),
+            dependencies: vec![],
+            success_criteria: vec![
+                "Unit tests pass".to_string(),
+                "Reviewed by Guardian".to_string(),
+            ],
+            plan_id: None,
+            retry_count: 0,
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            created_at: now - chrono::Duration::minutes(30 * (idx as i64 + 1)),
+            updated_at: now - chrono::Duration::minutes(5 * (idx as i64 + 1)),
+        };
+        store.insert(&objective).await?;
+    }
+    Ok(())
 }
 
 // ── Serialization helpers stored in state_machine.rs ──────────────────────

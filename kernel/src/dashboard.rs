@@ -158,6 +158,52 @@ pub async fn init_audit_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Insert a few hash-chained audit entries so the audit log tab is populated
+/// on first boot. Only invoked when the audit table is empty.
+pub async fn seed_audit_entries(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let kinds = [
+        ("obj-kernel-api", "objective.created"),
+        ("obj-dashboard", "objective.transitioned"),
+        ("obj-guardian", "guardian.reviewed"),
+        ("obj-pil", "objective.created"),
+        ("obj-federation", "objective.abandoned"),
+    ];
+    let now = chrono::Utc::now();
+    let mut prev_hash = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    for (idx, (objective_id, kind)) in kinds.iter().enumerate() {
+        let event_id = uuid::Uuid::new_v4().to_string();
+        let payload = format!("{objective_id}:{kind}:{idx}");
+        let hash = md5_hex(&payload);
+        let timestamp = (now - chrono::Duration::minutes(10 * (idx as i64 + 1)))
+            .to_rfc3339();
+        sqlx::query(
+            "INSERT OR IGNORE INTO audit_entries (event_id, hash, prev_hash, timestamp, kind, objective_id) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&event_id)
+        .bind(&hash)
+        .bind(&prev_hash)
+        .bind(&timestamp)
+        .bind(*kind)
+        .bind(*objective_id)
+        .execute(pool)
+        .await?;
+        prev_hash = hash;
+    }
+    Ok(())
+}
+
+/// Minimal hex digest — sufficient for hash-chain visualization in the demo
+/// seed. Not cryptographically secure; used only to populate the demo UI.
+fn md5_hex(input: &str) -> String {
+    // FNV-1a 128-bit stand-in producing a stable 32-char hex string.
+    let mut h: u128 = 0x6c62272e07bb014262b821756295c58d;
+    for b in input.bytes() {
+        h ^= b as u128;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:032x}")
+}
+
 /// Background task that subscribes to `EventBus` and persists hash-chained
 /// `AuditEntry` records to the SQLite `audit_entries` table.
 ///

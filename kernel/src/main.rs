@@ -64,6 +64,29 @@ enum Commands {
     },
 }
 
+/// Normalize a SQLite connection URL so sqlx can create the database file if it
+/// does not already exist.
+///
+/// sqlx's SQLite driver opens the database in read-write mode and refuses to
+/// create a missing file unless `?mode=rwc` is present. `sqlite::memory:` and
+/// URLs that already carry a `mode=` query parameter are returned unchanged.
+fn normalize_sqlite_url(url: &str) -> String {
+    if !url.starts_with("sqlite:") {
+        return url.to_string();
+    }
+    if url.contains("mode=") {
+        return url.to_string();
+    }
+    if url == "sqlite::memory:" || url == "sqlite://:memory:" {
+        return url.to_string();
+    }
+    if url.contains('?') {
+        format!("{url}&mode=rwc")
+    } else {
+        format!("{url}?mode=rwc")
+    }
+}
+
 fn load_diff(path: &str) -> Result<StructuredDiff, String> {
     let mut file = std::fs::File::open(path).map_err(|e| format!("Cannot open {path}: {e}"))?;
     let mut contents = String::new();
@@ -91,6 +114,7 @@ async fn main() {
     match &cli.command {
         Some(Commands::Serve { db }) => {
             let database_url = db.clone().unwrap_or_else(|| config.database.url.clone());
+            let database_url = normalize_sqlite_url(&database_url);
             let bind_addr: SocketAddr = format!(
                 "{}:{}",
                 config.server.bind_address,
@@ -123,6 +147,15 @@ async fn main() {
             let objective_store = ObjectiveStore::new(pool.clone())
                 .await
                 .expect("Failed to initialize objective store");
+            if objective_store.count().await.unwrap_or(0) == 0 {
+                if let Err(e) =
+                    ai_os_kernel::objective::seed_sample_objectives(&objective_store).await
+                {
+                    tracing::warn!("Failed to seed sample objectives: {e}");
+                } else {
+                    tracing::info!("Seeded sample objectives for first boot");
+                }
+            }
             let objective_store_arc = Arc::new(objective_store);
             let scheduler_arc = Arc::new(tokio::sync::Mutex::new(scheduler));
 
@@ -156,6 +189,17 @@ let metrics_handle = PrometheusBuilder::new()
             dashboard::init_audit_table(&pool)
                 .await
                 .expect("Failed to init audit table");
+            let audit_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_entries")
+                .fetch_one(&pool)
+                .await
+                .unwrap_or(0);
+            if audit_count == 0 {
+                if let Err(e) = dashboard::seed_audit_entries(&pool).await {
+                    tracing::warn!("Failed to seed audit entries: {e}");
+                } else {
+                    tracing::info!("Seeded sample audit entries for first boot");
+                }
+            }
             let audit_bus = event_bus.clone();
             let audit_pool = pool.clone();
             tokio::spawn(async move {
