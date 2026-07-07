@@ -211,7 +211,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
         // Serve dashboard/ directory as static files at root (/)
         .fallback_service(
-            ServeDir::new("../dashboard").append_index_html_on_directories(true),
+            ServeDir::new("dashboard").append_index_html_on_directories(true),
         )
     }
 

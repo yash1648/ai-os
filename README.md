@@ -95,10 +95,10 @@ Objective → Scheduler → Worker (plan + execute) → Reviewer
 
 AI-OS ships with a real-time web dashboard for observability:
 
-![Dashboard Overview](dashboard-viewport.png)
+![Dashboard Overview](docs/screenshots/dashboard-viewport.png)
 *The AI-OS Kernel Dashboard — real-time overview with objective metrics, system status, and recent activity.*
 
-![Dashboard Full Page](dashboard-fullpage.png)
+![Dashboard Full Page](docs/screenshots/dashboard-fullpage.png)
 *Full dashboard interface with sidebar navigation, timeline view, objectives table, audit log, and metrics panels.*
 
 The dashboard provides:
@@ -107,6 +107,14 @@ The dashboard provides:
 - **Objectives** — browse, filter, and inspect individual objectives
 - **Audit Log** — immutable, searchable record of every Kernel decision
 - **Metrics** — Prometheus-powered performance and resource monitoring
+
+### Tab Gallery
+
+| Overview | Timeline | Objectives |
+|---|---|---|
+| ![Overview](docs/screenshots/dashboard-overview.png) | ![Timeline](docs/screenshots/dashboard-timeline.png) | ![Objectives](docs/screenshots/dashboard-objectives.png) |
+| **Audit Log** | **Metrics** | |
+| ![Audit Log](docs/screenshots/dashboard-audit.png) | ![Metrics](docs/screenshots/dashboard-metrics.png) | |
 
 ---
 
