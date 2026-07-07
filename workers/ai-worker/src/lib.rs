@@ -67,6 +67,10 @@ pub enum ManifestStepType {
     WorkerCall,
     Gate,
     Test,
+    /// Calls an OpenAI-compatible LLM endpoint. The API key and base URL are
+    /// read from the `AI_OS_LLM_API_KEY` / `AI_OS_LLM_BASE_URL` environment
+    /// variables and never embedded in the manifest or worker output.
+    Llm,
 }
 
 /// An atomic transformation directive within a manifest group.
@@ -181,6 +185,47 @@ pub async fn execute_manifest(manifest: &WorkerManifest) -> WorkerOutput {
                         "type": "worker_call",
                     }));
                 }
+                ManifestStepType::Llm => {
+                    let prompt = step
+                        .config
+                        .get("prompt")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| step.operation.as_deref())
+                        .unwrap_or("")
+                        .to_string();
+                    let model = step
+                        .config
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("auto")
+                        .to_string();
+                    let max_tokens = step
+                        .config
+                        .get("max_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(512);
+
+                    match llm_call(&prompt, &model, max_tokens).await {
+                        Ok(content) => {
+                            step_results.push(serde_json::json!({
+                                "step_id": step.id,
+                                "status": "ok",
+                                "type": "llm",
+                                "model": model,
+                                "content": content,
+                            }));
+                        }
+                        Err(e) => {
+                            overall_status = WorkerStatus::Failure;
+                            step_results.push(serde_json::json!({
+                                "step_id": step.id,
+                                "status": "error",
+                                "type": "llm",
+                                "error": format!("{:#}", e),
+                            }));
+                        }
+                    }
+                }
                 ManifestStepType::Gate | ManifestStepType::Test => {
                     // Stub: gates and tests always pass
                     step_results.push(serde_json::json!({
@@ -263,6 +308,51 @@ pub async fn run_shell_command(command: &str, timeout_s: Option<u64>) -> anyhow:
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     Ok(stdout)
+}
+
+/// Call an OpenAI-compatible chat-completions endpoint.
+///
+/// Credentials come exclusively from the environment:
+/// `AI_OS_LLM_BASE_URL` (default `http://localhost:3001/v1`) and
+/// `AI_OS_LLM_API_KEY`. The key is sent only in the `Authorization` header and
+/// is never logged, serialized into the worker output, or written anywhere.
+pub async fn llm_call(prompt: &str, model: &str, max_tokens: u64) -> anyhow::Result<String> {
+    use anyhow::Context;
+
+    let base_url = std::env::var("AI_OS_LLM_BASE_URL")
+        .unwrap_or_else(|_| "http://localhost:3001/v1".to_string());
+    let api_key = std::env::var("AI_OS_LLM_API_KEY")
+        .context("AI_OS_LLM_API_KEY is not set; cannot perform LLM step")?;
+
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "max_tokens": max_tokens,
+    });
+
+    let resp = client
+        .post(format!("{}/chat/completions", base_url.trim_end_matches('/')))
+        .bearer_auth(&api_key)
+        .json(&body)
+        .send()
+        .await
+        .context("LLM request failed")?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("LLM endpoint returned status {}", resp.status());
+    }
+
+    let value: Value = resp.json().await.context("failed to parse LLM response")?;
+    let content = value
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok(content)
 }
 
 // ---------------------------------------------------------------------------

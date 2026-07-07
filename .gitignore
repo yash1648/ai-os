@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 *.rs.bk
 
 # IDE
@@ -54,6 +53,9 @@ yarn-error.log*
 # Ruflo / OpenCode
 .swarm/
 .omo/
+
+# Playwright browser session artifacts
+.playwright-mcp/
 
 # docs build artifacts
 docs/_build/
