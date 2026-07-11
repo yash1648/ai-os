@@ -282,3 +282,6 @@ MIT — see [LICENSE](LICENSE) for details.
 <sub>Built with Rust, Python, and the conviction that LLMs reason but Kernels decide.</sub>
 </div>
 # test
+password = "hunter2"
+or
+api_key = "sk-1234567890abcdef"
